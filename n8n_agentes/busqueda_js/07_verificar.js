@@ -18,10 +18,64 @@ const esGenerica = (nombre) => GENERICAS.reduce((t, g) => t.split(g).join(''), c
 const tokensProducto = [...new Set([plan.producto, plan.nombre_en, ...(plan.sinonimos || [])].filter(Boolean).flatMap((s) => norm(s).split(' ').filter((w) => w.length >= 5)))];
 const esNombreDeProducto = (txt) => tokensProducto.some((w) => norm(txt).includes(w));
 
+// ---------- 0. Ofertas de precio (de todas las paginas con precios, no solo de los finalistas) ----------
+const paginaPorUrl = new Map((leer.paginas || []).map((g) => [g.url, g]));
+const ofertasCrudas = [];
+const FACT_MASA = { kg: 1, kilo: 1, kilos: 1, kilogramo: 1, kilogramos: 1, g: 0.001, gr: 0.001, gramo: 0.001, gramos: 0.001, lb: 0.45359237, libra: 0.45359237, libras: 0.45359237, oz: 0.0283495, onza: 0.0283495, onzas: 0.0283495, ton: 1000, tonelada: 1000, toneladas: 1000, t: 1000, mt: 1000 };
+const FACT_VOL = { l: 1, lt: 1, litro: 1, litros: 1, ml: 0.001, gal: 3.78541, galon: 3.78541 };
+const ALIAS_UNIDAD = { kg: ['kg', 'kilo'], lb: ['lb', 'libra'], libra: ['libra', 'lb'], kilo: ['kilo', 'kg'], ton: ['ton'], tonelada: ['ton'], l: ['litro', 'lt'], litro: ['litro'], g: ['gr', 'gramo'], unidad: ['unidad', 'und', 'pieza', 'c/u'] };
+const baseDeUnidad = (u) => {
+  const k = norm(u).replace(/\./g, '');
+  if (k in FACT_MASA) return { k, base: 'kg', f: FACT_MASA[k] };
+  if (k in FACT_VOL) return { k, base: 'l', f: FACT_VOL[k] };
+  if (['unidad', 'unidades', 'und', 'u', 'pieza', 'piezas', 'pza'].includes(k)) return { k: 'unidad', base: 'unidad', f: 1 };
+  if (k === 'docena') return { k, base: 'unidad', f: 12 };
+  return null;
+};
+const soloDigitos = (t) => String(t ?? '').replace(/\D/g, '');
+
+const procesarPrecios = (it, meta) => {
+  const pg = paginaPorUrl.get(meta.url);
+  const txtResp = it.json?.content?.[0]?.text ?? '';
+  const uso = it.json?.usage ?? {};
+  llamadas.push({ etapa: 'precios', dominio: meta.dominio, entrada: uso.input_tokens ?? 0, salida: uso.output_tokens ?? 0, ok: !!txtResp });
+  const lista = extraerJson(txtResp)?.ofertas;
+  if (!pg || !Array.isArray(lista)) return;
+  const ventNorm = norm(pg.ventanas || '');
+  const ventDig = soloDigitos(pg.ventanas || '');
+  for (const o of lista.slice(0, 8)) {
+    camposTotales++;
+    const cita = String(o?.cita ?? '').trim();
+    const precio = Number(o?.precio);
+    const rechazo = cita.length < 6 ? 'sin cita textual'
+      : !ventNorm.includes(norm(cita)) ? 'la cita no aparece en la pagina'
+      : (!Number.isFinite(precio) || precio <= 0) ? 'precio no numerico'
+      : (Math.floor(precio) > 0 && !soloDigitos(cita).includes(String(Math.floor(precio)))) ? 'el precio no coincide con la cita' : null;
+    if (rechazo) { camposDescartados++; continue; }
+    // La cantidad solo se usa si el texto la respalda; si no, el precio se muestra pero no se normaliza
+    const unidades = Number(o.unidades) > 0 ? Number(o.unidades) : 1;
+    const cant = Number(o.cantidad);
+    const ub = o.unidad ? baseDeUnidad(o.unidad) : null;
+    let total = null;
+    if (ub && Number.isFinite(cant) && cant > 0) {
+      const cantOk = cant === 1 ? (ALIAS_UNIDAD[ub.k] || [ub.k]).some((a) => ventNorm.includes(a)) : ventDig.includes(soloDigitos(cant));
+      const unidOk = unidades === 1 || ventDig.includes(soloDigitos(unidades));
+      if (cantOk && unidOk) total = unidades * cant * ub.f;
+    }
+    ofertasCrudas.push({
+      dominio: meta.dominio, url: meta.url, titulo: pg.titulo || '',
+      descripcion: String(o.descripcion ?? '').slice(0, 90), presentacion: String(o.presentacion ?? '').slice(0, 60),
+      precio, moneda: /^[A-Za-z]{3}$/.test(String(o.moneda ?? '')) ? String(o.moneda).toUpperCase() : null,
+      condicion: norm(o.condicion), cantidad_total: total, base: total ? ub.base : null, cita: cita.slice(0, 200),
+    });
+  }
+};
+
 // ---------- 1. Parseo y verificacion de citas ----------
 items.forEach((it, i) => {
   const meta = ext[i]?.json;
   if (!meta || meta.omitir) return;
+  if (meta.tipo_item === 'precios') { procesarPrecios(it, meta); return; }
   const f = porDominio.get(meta.dominio);
   if (!f) return;
   const txtResp = it.json?.content?.[0]?.text ?? '';
@@ -100,6 +154,55 @@ for (const c of candidatos) {
   delete c.rep_resultados;
 }
 
+// ---------- 5b. Ofertas de precio: precio por kilo (o litro, o unidad) y en la moneda del destino ----------
+const monedaDestino = MONEDA_PAIS[norm(plan.pais_destino || '')] || 'COP';
+let fx = { ok: false, moneda: monedaDestino, fecha: null, fuente: null };
+let ratesFx = {};
+if (ofertasCrudas.some((o) => o.moneda && o.moneda !== monedaDestino)) {
+  try {
+    const r = await this.helpers.httpRequest({ method: 'GET', url: FX_URL, json: true, timeout: 12000 });
+    if (r && r.rates && r.rates[monedaDestino]) { ratesFx = r.rates; fx = { ok: true, moneda: monedaDestino, fecha: r.time_last_update_utc || null, fuente: 'ExchangeRate-API (open.er-api.com)' }; }
+  } catch (e) { fx.error = String(e.message || e).slice(0, 80); }
+} else if (ofertasCrudas.length) fx = { ok: true, moneda: monedaDestino, fecha: null, fuente: null };
+const aDestino = (valor, moneda) => {
+  if (!moneda) return null;
+  if (moneda === monedaDestino) return valor;
+  return (fx.ok && ratesFx[moneda]) ? valor * (ratesFx[monedaDestino] / ratesFx[moneda]) : null;
+};
+const nombrePorDominio = new Map(candidatos.map((c) => [c.dominio, c.nombre]));
+const vistasOferta = new Set();
+const ofertas = [];
+for (const o of ofertasCrudas) {
+  const k = `${o.dominio}|${o.precio}|${o.moneda}|${o.cantidad_total}`;
+  if (vistasOferta.has(k)) continue;
+  vistasOferta.add(k);
+  const porBase = o.cantidad_total ? o.precio / o.cantidad_total : null;
+  let venta = o.condicion === 'detal' ? 'detal' : o.condicion === 'mayorista' ? 'mayor' : null;
+  let porTamano = false;
+  // Si la pagina no dice si es detal o mayor, se clasifica por el tamano de la presentacion (se declara en el informe)
+  if (!venta && o.base === 'kg' && o.cantidad_total) { if (o.cantidad_total <= 5) { venta = 'detal'; porTamano = true; } else if (o.cantidad_total >= 20) { venta = 'mayor'; porTamano = true; } }
+  // Un precio al detal en la moneda de otro pais no le sirve a quien compra en el destino: se omite del cuadro y se cuenta
+  const fueraDeDestino = venta === 'detal' && !!o.moneda && o.moneda !== monedaDestino;
+  ofertas.push({ ...o, nombre: nombrePorDominio.get(o.dominio) || o.dominio, precio_base: porBase, precio_base_destino: porBase !== null ? aDestino(porBase, o.moneda) : null, venta: venta || 'sin_clasificar', venta_por_tamano: porTamano, fuera_de_destino: fueraDeDestino });
+}
+const ofertasOtrosPaises = ofertas.filter((o) => o.fuera_de_destino).length;
+const ofertasUtiles = ofertas.filter((o) => !o.fuera_de_destino);
+const conteoBase = {};
+ofertasUtiles.filter((o) => o.base).forEach((o) => { conteoBase[o.base] = (conteoBase[o.base] || 0) + 1; });
+const baseDominante = Object.entries(conteoBase).sort((a, b) => b[1] - a[1])[0]?.[0] || 'kg';
+const percentil = (a, q) => { const s = [...a].sort((x, y) => x - y); const pos = (s.length - 1) * q; const i = Math.floor(pos); return s[i] + (s[Math.min(i + 1, s.length - 1)] - s[i]) * (pos - i); };
+const statsPrecios = {};
+for (const venta of ['detal', 'mayor']) {
+  const xs = ofertasUtiles.filter((o) => o.venta === venta && o.base === baseDominante && o.precio_base_destino !== null).map((o) => o.precio_base_destino);
+  if (xs.length) statsPrecios[venta] = { n: xs.length, minimo: Math.min(...xs), q1: percentil(xs, 0.25), mediana: percentil(xs, 0.5), q3: percentil(xs, 0.75), maximo: Math.max(...xs) };
+}
+// Mejor precio comparable de cada proveedor (en la moneda del destino): alimenta el ranking y el narrador
+const mejorPrecioPorDominio = new Map();
+ofertasUtiles.filter((o) => o.base === baseDominante && o.precio_base_destino !== null).forEach((o) => {
+  const previo = mejorPrecioPorDominio.get(o.dominio);
+  if (previo === undefined || o.precio_base_destino < previo) mejorPrecioPorDominio.set(o.dominio, o.precio_base_destino);
+});
+const preciosOrdenados = [...new Set([...mejorPrecioPorDominio.values()])].sort((a, b) => a - b);
 // ---------- 3. Calificaciones ordinales ----------
 const ORD = { Alto: 3, Medio: 2, Bajo: 1, 'No verificable': 0 };
 const req = (plan.certificaciones_requeridas || []).map(norm).filter(Boolean);
@@ -119,7 +222,9 @@ const grupos = {};
 candidatos.filter((c) => c.precio && !precioNoComparable(c)).forEach((c) => { const k = `${norm(c.precio.moneda)}|${norm(c.precio.unidad)}`; (grupos[k] = grupos[k] || []).push(c); });
 Object.values(grupos).forEach((g) => { if (g.length >= 2) g.sort((a, b) => Number(a.precio.valor) - Number(b.precio.valor)).forEach((c, i) => { c.precio_rango = i; c.precio_comparable = true; }); });
 
+const redondeo = (x) => (x >= 100 ? Math.round(x) : Math.round(x * 100) / 100);
 for (const c of candidatos) {
+  c.mejor_precio_dest = mejorPrecioPorDominio.has(c.dominio) ? mejorPrecioPorDominio.get(c.dominio) : null;
   const pts = (c.empresa ? 1 : 0) + (c.emails.length ? 1 : 0) + (c.telefonos.length ? 1 : 0) + ((c.direccion || c.ciudad) ? 1 : 0) + (c.menciones.length >= 2 ? 1 : 0);
   const tv = norm(c.tipo?.valor || '');
   const have = certsDe(c);
@@ -140,14 +245,14 @@ for (const c of candidatos) {
     tipo: tv === 'fabricante' ? 'Fabricante' : (tv === 'distribuidor' || tv === 'comercializador') ? 'Distribuidor' : 'No determinado',
     certificaciones: certCal,
     cobertura: cob,
-    precio: !c.precio ? 'No encontrado' : precioDetalEnMayor(c) ? 'Solo al detal (no comparable con compra mayorista)' : precioSinUnidad(c) ? 'Sin unidad indicada (no comparable)' : 'Referencia disponible',
+    precio: c.mejor_precio_dest != null ? `Mejor precio comparable: ${redondeo(c.mejor_precio_dest)} ${monedaDestino}/${baseDominante}` : !c.precio ? 'No encontrado' : precioDetalEnMayor(c) ? 'Solo al detal (no comparable con compra mayorista)' : precioSinUnidad(c) ? 'Sin unidad indicada (no comparable)' : 'Referencia disponible',
   };
   c.ord = {
     identidad: ORD[c.cal.identidad],
     tipo: { Fabricante: 3, Distribuidor: 2, 'No determinado': 1 }[c.cal.tipo],
     certificaciones: certCal === 'No exigidas' ? 2 : (ORD[certCal] ?? 0),
     cobertura: { Local: 3, 'Envia al exterior (declarado)': 2, 'No verificable': 1, 'No evaluada': 1, 'Fuera del pais de destino (sin envio declarado)': 0 }[cob],
-    precio: (!c.precio || precioNoComparable(c)) ? 0 : (c.precio_comparable ? Math.max(1, 3 - c.precio_rango) : 2),
+    precio: c.mejor_precio_dest != null ? Math.max(1, 3 - preciosOrdenados.indexOf(c.mejor_precio_dest)) : ((!c.precio || precioNoComparable(c)) ? 0 : (c.precio_comparable ? Math.max(1, 3 - c.precio_rango) : 2)),
   };
   if (c.ofrece && c.ofrece.valor === false) c.veredicto = 'Descartado: no ofrece el producto';
   else if (req.length && certCal === 'No verificable') c.veredicto = 'Condicionado: validar certificaciones';
@@ -180,21 +285,30 @@ const sensibilidad = !topPrecio ? 'Sin proveedores finalistas para comparar.'
 // ---------- 5. Riesgos generales ----------
 const riesgos = [];
 const paisesCand = new Set(candidatos.map((c) => (c.pais ? norm(c.pais.valor) : (TLD_PAIS && c.dominio.split('.').pop()))));
-if (candidatos.length >= 2 && paisesCand.size === 1) riesgos.push('Todos los finalistas parecen estar en el mismo pais: riesgo de concentracion geografica.');
+if (plan.venta === 'mayor' && candidatos.length >= 2 && paisesCand.size === 1) riesgos.push('Todos los finalistas parecen estar en el mismo pais: riesgo de concentracion geografica.');
 if (candidatos.length < 3) riesgos.push('Hay menos de 3 finalistas verificables: poca competencia para negociar y poco respaldo si uno falla.');
-if (candidatos.every((c) => !c.precio)) riesgos.push('Ningun finalista publica precio verificable: el costo total no se puede estimar y debe pedirse por RFQ.');
-if (!candidatos.some((c) => c.cal.tipo === 'Fabricante')) riesgos.push('Ningun finalista pudo verificarse como fabricante directo: pueden ser intermediarios.');
+if (candidatos.length && candidatos.every((c) => !c.precio && c.mejor_precio_dest == null)) riesgos.push('Ningun finalista publica precio verificable: el costo total no se puede estimar y debe pedirse por RFQ.');
+if (plan.venta === 'mayor' && !candidatos.some((c) => c.cal.tipo === 'Fabricante')) riesgos.push('Ningun finalista pudo verificarse como fabricante directo: pueden ser intermediarios.');
 candidatos.filter((c) => c.alertas.length).forEach((c) => riesgos.push(`Posibles alertas de reputacion para ${nombreDe(c)}: revisar las fuentes citadas y confirmar que se trata de la misma empresa y no de una homonima.`));
-candidatos.filter(precioDetalEnMayor).forEach((c) => riesgos.push(`El precio publicado por ${nombreDe(c)} es al detal: no sirve como referencia para una compra al por mayor.`));
-candidatos.filter((c) => !precioDetalEnMayor(c) && precioSinUnidad(c)).forEach((c) => riesgos.push(`El precio publicado por ${nombreDe(c)} no indica unidad (por kilo, bulto o tonelada): no se puede comparar.`));
+candidatos.filter((c) => c.mejor_precio_dest == null && precioDetalEnMayor(c)).forEach((c) => riesgos.push(`El precio publicado por ${nombreDe(c)} es al detal: no sirve como referencia para una compra al por mayor.`));
+candidatos.filter((c) => c.mejor_precio_dest == null && !precioDetalEnMayor(c) && precioSinUnidad(c)).forEach((c) => riesgos.push(`El precio publicado por ${nombreDe(c)} no indica unidad (por kilo, bulto o tonelada): no se puede comparar.`));
 if (dest && candidatos.length && candidatos.every((c) => c.cal.cobertura !== 'Local')) riesgos.push('Ningun finalista pudo verificarse como presente en el pais de destino: revisar costos y plazos de importacion o repetir la busqueda en modo profunda.');
 const motoresActivos = Object.entries(leer.motores_busqueda).filter(([, x]) => x.resultados > 0).length;
 if (motoresActivos <= 1) riesgos.push(`La busqueda dependio de ${motoresActivos === 1 ? 'un solo buscador' : 'ningun buscador'}: la cobertura es menor a la esperada, conviene repetirla mas tarde.`);
 if (leer.consultas_ejecutadas && (leer.consultas_sin_resultados || 0) / leer.consultas_ejecutadas > 0.3) riesgos.push('Mas del 30% de las consultas no devolvio resultados (posible limite de los buscadores): la cobertura puede ser incompleta.');
 
+if (!ofertasUtiles.length) riesgos.push('No se encontraron precios publicos verificables: hay que pedirlos por cotizacion (RFQ).');
+else {
+  if (!statsPrecios.mayor && plan.venta !== 'detal') riesgos.push('No se encontraron precios publicos al por mayor comparables: los precios por volumen se obtienen por cotizacion (RFQ).');
+  if (!statsPrecios.detal && plan.venta !== 'mayor') riesgos.push('No se encontraron precios al detal comparables.');
+  if (ofertas.some((o) => o.moneda && o.precio_base_destino === null && o.cantidad_total)) riesgos.push(`Algunos precios no se pudieron pasar a ${monedaDestino} porque el tipo de cambio no estuvo disponible.`);
+}
+const resumenStats = (s) => (s ? { ofertas: s.n, minimo: redondeo(s.minimo), mediana: redondeo(s.mediana), maximo: redondeo(s.maximo) } : null);
+
 // ---------- 6. Solicitud a Claude para la narrativa ----------
 const rankingCompacto = ranking.map((c, i) => ({
   posicion: i + 1, proveedor: nombreDe(c), url: c.url, veredicto: c.veredicto, calificaciones: c.cal,
+  mejor_precio_comparable: c.mejor_precio_dest != null ? { valor: redondeo(c.mejor_precio_dest), moneda: monedaDestino, por: baseDominante } : null,
   datos_verificados: {
     tipo: c.tipo?.valor || null, productos: c.productos?.valor || null, pais: c.pais?.valor || null, ciudad: c.ciudad?.valor || null,
     certificaciones: certsDe(c), precio: c.precio ? { valor: c.precio.valor, moneda: c.precio.moneda, unidad: c.precio.unidad, condicion: c.precio.condicion, comparable: !precioNoComparable(c) } : null,
@@ -208,10 +322,14 @@ const rankingCompacto = ranking.map((c, i) => ({
 const entradaNarrativa = {
   solicitud: { producto: plan.producto, especificacion: plan.especificacion, cantidad_pedido: plan.cantidad_pedido, cantidad_anual: plan.cantidad_anual, pais_destino: plan.pais_destino, venta: plan.venta, certificaciones_requeridas: plan.certificaciones_requeridas, kraljic_provisional: plan.kraljic },
   supuestos: plan.supuestos, prioridad_del_ranking: riesgoPrimero ? 'riesgo y continuidad primero' : 'precio primero',
+  precios_encontrados: {
+    moneda_destino: monedaDestino, precio_por: baseDominante, ofertas_con_precio: ofertasUtiles.length,
+    al_detal: resumenStats(statsPrecios.detal), al_por_mayor: resumenStats(statsPrecios.mayor),
+  },
   ranking: rankingCompacto, sensibilidad, riesgos_generales: riesgos,
   cobertura: { modo: leer.modo, consultas: leer.consultas_ejecutadas, dominios_distintos: leer.dominios_distintos, paginas_leidas_ok: leer.estadisticas_lectura.ok, finalistas: candidatos.length },
 };
-const sinFinalistas = candidatos.length === 0;
+const sinFinalistas = candidatos.length === 0 && ofertasUtiles.length === 0;
 const claudeBody = sinFinalistas
   ? { model: MODELO, max_tokens: 5, messages: [{ role: 'user', content: 'ok' }] }
   : { model: MODELO, max_tokens: 2400, temperature: 0.2, system: PROMPT_INFORME, messages: [{ role: 'user', content: JSON.stringify(entradaNarrativa) }] };
@@ -220,6 +338,7 @@ const { resultados, finalistas, a_leer, consultas_lista, ...resto } = leer;
 return [{
   json: {
     ...resto, llamadas, candidatos: ranking, sensibilidad, riesgos, prioridad: riesgoPrimero ? 'riesgo' : 'precio',
+    ofertas, ofertas_otros_paises: ofertasOtrosPaises, fx, stats_precios: statsPrecios, base_dominante: baseDominante, moneda_destino: monedaDestino,
     verificacion: { campos_totales: camposTotales, campos_descartados: camposDescartados },
     consultas_reputacion: consultasReputacion.length, sin_finalistas: sinFinalistas, claude_body: claudeBody,
   },

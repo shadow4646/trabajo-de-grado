@@ -5,19 +5,28 @@ const PRECIO_MTOK = { entrada: 1.0, salida: 5.0 }; // USD por millon de tokens; 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const CARPETA_INFORMES = 'C:\\Users\\monca\\.n8n-files\\informes';
 
-const FAMILIAS_ORDEN = ['fabricantes', 'distribuidores', 'precios', 'directorios_b2b', 'catalogos_pdf', 'registros_oficiales', 'gremios', 'reputacion'];
+const FAMILIAS_ORDEN = ['fabricantes', 'distribuidores', 'precios', 'detal', 'directorios_b2b', 'catalogos_pdf', 'registros_oficiales', 'gremios', 'reputacion'];
+
+// Si el usuario no dice a donde va la compra, se asume el pais del proyecto y se anota como supuesto
+const DESTINO_POR_DEFECTO = { pais: 'Colombia', ciudad: 'Bogota' };
+const FX_URL = 'https://open.er-api.com/v6/latest/USD'; // gratuita y sin clave; referencia, no oficial
+const MONEDA_PAIS = {
+  colombia: 'COP', mexico: 'MXN', peru: 'PEN', chile: 'CLP', argentina: 'ARS', ecuador: 'USD', brasil: 'BRL', espana: 'EUR',
+  'estados unidos': 'USD', panama: 'USD', uruguay: 'UYU', bolivia: 'BOB', paraguay: 'PYG', 'costa rica': 'CRC', guatemala: 'GTQ',
+};
+const MONEDA_TLD = { co: 'COP', mx: 'MXN', pe: 'PEN', cl: 'CLP', ar: 'ARS', ec: 'USD', br: 'BRL', es: 'EUR', fr: 'EUR', it: 'EUR', de: 'EUR', ie: 'EUR', pt: 'EUR', us: 'USD', uy: 'UYU', bo: 'BOB', py: 'PYG', cr: 'CRC', gt: 'GTQ', pa: 'USD', uk: 'GBP', au: 'AUD', ca: 'CAD', nz: 'NZD' };
 
 const MODOS = {
   rapida: {
     nombre: 'rapida', max_consultas: 22, por_familia: 4,
-    familias: ['fabricantes', 'distribuidores', 'precios', 'registros_oficiales'],
-    directorios: 0, max_paginas: 14, finalistas: 4, bola_nieve: false,
+    familias: ['fabricantes', 'distribuidores', 'precios', 'detal', 'registros_oficiales'],
+    directorios: 0, max_paginas: 20, max_paginas_precio: 12, finalistas: 4, bola_nieve: false,
     saturacion: false, presupuesto_ms: 120000, lote: 2, pausa_ms: 1200,
   },
   profunda: {
     nombre: 'profunda', max_consultas: 95, por_familia: 4,
     familias: FAMILIAS_ORDEN,
-    directorios: 8, max_paginas: 55, finalistas: 9, bola_nieve: true,
+    directorios: 8, max_paginas: 55, max_paginas_precio: 30, finalistas: 9, bola_nieve: true,
     saturacion: true, presupuesto_ms: 220000, lote: 2, pausa_ms: 1500,
   },
 };
@@ -161,6 +170,7 @@ function clasificarResultado(r) {
   if (/asociacion|federacion|gremio|association|federation|camara de comercio|chamber/.test(t) && !/fabricamos|we manufacture/.test(t)) return 'gremio';
   if (/noticias|news|blog|periodico|diario|revista|magazine/.test(d + url)) return 'noticia';
   if (/market (research|report|size|analysis|insights)|cagr|informe de mercado|estudio de mercado|forecast to 20/.test(t)) return 'noticia';
+  if (/\/restaurantes?\/|\/menu\b|\/menus\b/.test(url)) return 'restaurante';
   if (/mercadolibre|amazon\.|olx\.|alibaba|ebay|aliexpress|temu|rappi|exito\.com|carulla|jumbo|olimpica|alkosto|tiendasd1|d1\.com|ara\.com|linio|falabella|homecenter|walmart|carrefour|mercadona|lidl|instacart|supermercado|domicilios\.com|evisos|clasificad|segundamano|milanuncios|locanto|gumtree|craigslist/.test(d)) return 'tienda';
   if (/fabricante|manufacturer|molino|planta de|factory|fabrica |fabricamos|producimos|we manufacture|mill\b|productor/.test(t)) return 'fabricante_probable';
   if (/distribuidor|distributor|mayorista|wholesale|supplier|proveedor|comercializadora|importador|importer|exportador|exporter/.test(t)) return 'distribuidor_probable';
@@ -178,7 +188,7 @@ function hablaDelProducto(plan, txtNorm) {
   });
 }
 
-const PESO_TIPO = { fabricante_probable: 5, distribuidor_probable: 3.5, pdf: 2.5, gremio: 2, oficial: 2, tienda: 1.5, otro: 1, directorio: 1, noticia: 0.5, academico: 0.2, bloqueado: 0 };
+const PESO_TIPO = { restaurante: 0, fabricante_probable: 5, distribuidor_probable: 3.5, pdf: 2.5, gremio: 2, oficial: 2, tienda: 1.5, otro: 1, directorio: 1, noticia: 0.5, academico: 0.2, bloqueado: 0 };
 
 function nombreMarca(titulo, dom) {
   const base = String(dom || '').split('.')[0];
@@ -190,6 +200,8 @@ function nombreMarca(titulo, dom) {
 const PROMPT_INTERPRETAR = `Eres un analista de compras senior. Recibes la solicitud de un usuario que necesita comprar un producto o insumo (comida, materia prima, producto terminado, al por mayor o al detal). Tu tarea es interpretarla y preparar el plan de busqueda web.
 
 Responde SOLO con un objeto JSON valido, sin texto antes ni despues y sin bloques de codigo. Usa null cuando un dato no aparezca en la solicitud; nunca inventes cantidades, paises ni requisitos que el usuario no menciono.
+
+Valores por defecto: si la solicitud no indica pais de destino, usa pais_destino "Colombia" y ciudad_destino "Bogota" y anotalo en "supuestos" (por ejemplo "Se asumio destino Colombia (Bogota) porque no se indico otro"). Si no indica si la compra es al por mayor o al detal, usa venta "no_especificado": el sistema buscara precios de las dos formas.
 
 Reglas contra la invencion (muy importantes):
 - "requisitos_calidad" contiene SOLO lo que el usuario escribio. Nunca agregues especificaciones tecnicas tipicas del producto (porcentajes, rangos, grados, normas). Si faltan y cambiarian el resultado, formulalos como preguntas en "preguntas_pendientes".
@@ -218,13 +230,14 @@ Esquema:
   "fabricantes": [{"q": "consulta de busqueda web", "idioma": "es"}],
   "distribuidores": [{"q": "...", "idioma": "es"}],
   "precios": [{"q": "...", "idioma": "es"}],
+  "detal": [{"q": "...", "idioma": "es"}],
   "registros_oficiales": [{"q": "...", "idioma": "es"}],
   "gremios": [{"q": "...", "idioma": "es"}],
   "reputacion": [{"q": "...", "idioma": "es"}]
  }
 }
 
-Reglas para "consultas": de 3 a 4 por familia, cortas y como las escribiria una persona en un buscador. "fabricantes" mezcla espanol, ingles y el idioma de los paises de origen probables, y al menos dos consultas deben nombrar el pais de destino; "distribuidores" busca en el pais o la ciudad de destino y, si la venta es al por mayor, usa palabras como mayorista, por tonelada o por bulto; "precios" busca precios de referencia, listas, indices o boletines oficiales; "registros_oficiales" busca registros sanitarios, listados de empresas autorizadas o normas aplicables; "gremios" busca asociaciones, camaras y listas de afiliados; "reputacion" busca opiniones, reclamos o sanciones de proveedores de ese producto. No uses operadores site: ni filetype:, eso lo agrega el sistema. No uses guiones largos.`;
+Reglas para "consultas": de 3 a 4 por familia, cortas y como las escribiria una persona en un buscador. "fabricantes" mezcla espanol, ingles y el idioma de los paises de origen probables, y al menos dos consultas deben nombrar el pais de destino; "distribuidores" busca en el pais o la ciudad de destino y, si la venta es al por mayor, usa palabras como mayorista, por tonelada o por bulto; "precios" busca precios al por mayor (por tonelada, por bulto o por caja), listas de precios, centrales mayoristas, indices o boletines oficiales; "detal" busca donde comprarlo al detal en el pais o la ciudad de destino (supermercados, plazas de mercado, carnicerias o tiendas en linea) con su precio por kilo o por unidad; "registros_oficiales" busca registros sanitarios, listados de empresas autorizadas o normas aplicables; "gremios" busca asociaciones, camaras y listas de afiliados; "reputacion" busca opiniones, reclamos o sanciones de proveedores de ese producto. No uses operadores site: ni filetype:, eso lo agrega el sistema. No uses guiones largos.`;
 
 const PROMPT_EXTRAER = `Extraes datos de proveedores desde el texto de una pagina web. Recibes la especificacion que busca el comprador y el texto de la pagina. Responde SOLO con un objeto JSON valido, sin texto adicional.
 
@@ -263,16 +276,65 @@ Reglas estrictas:
 - Si un proveedor esta fuera del pais de destino o su cobertura es "No verificable", dilo y explica el efecto en logistica y costo sin inventar cifras.
 - Este informe es un escaneo de mercado previo a una cotizacion formal (RFQ), no una cotizacion.
 - No uses guiones largos (el caracter de raya). Usa comas, puntos, dos puntos o parentesis.
-- Escribe en espanol, en Markdown, con exactamente estas secciones:
+- El JSON trae "precios_encontrados": el rango de precios por kilo (al detal y al por mayor, en la moneda del destino), y cada proveedor del ranking puede traer "mejor_precio_comparable". Usa esas cifras tal cual vienen y atribuyelas SOLO al proveedor donde aparecen: nunca calcules, redondees, mezcles ni inventes un precio. Si no hay precios al por mayor publicos, dilo y explica que se obtienen por cotizacion.
+- No afirmes que un proveedor es mas barato o mas caro que otro salvo comparando sus "mejor_precio_comparable"; un proveedor sin ese dato no se puede comparar por precio.
+- El informe ya incluye el cuadro de precios y las fichas, asi que se breve: no repitas tablas ni listas de datos.
+- Escribe en espanol, en Markdown, con exactamente estas dos secciones:
 
 ## Resumen ejecutivo y recomendacion
-(maximo 180 palabras: proveedor principal, respaldo, y que validar antes de comprar)
-
-## Lectura de cada proveedor
-(un parrafo breve por proveedor, con su nombre en negrita: que ofrece y por que sube o baja en el ranking)
+(maximo 120 palabras: donde conviene comprar al detal y al por mayor segun los precios encontrados, que proveedor es el principal y cual el respaldo, y que validar antes de comprar)
 
 ## Riesgos y plan B
-(riesgos reales detectados y que hacer si el principal falla)
+(maximo 120 palabras: riesgos reales detectados y que hacer si el principal falla)`;
 
-## Sensibilidad
-(una o dos frases: que proveedor gana si se prioriza precio y cual si se prioriza riesgo y continuidad)`;
+const PROMPT_PRECIOS = `Extraes ofertas de precio de un producto desde fragmentos de texto de una pagina web. Recibes el producto buscado, la moneda probable del sitio y los fragmentos (lineas con precios y su contexto). Responde SOLO con un objeto JSON valido, sin texto adicional.
+
+Reglas:
+- Incluye solo ofertas del producto buscado o de una variante directa (otro corte, marca o presentacion del mismo producto) para comprar y cocinar en casa o en un negocio. Ignora platos de restaurante, comida preparada o menus (por ejemplo "acompanado de papas"), otros productos, costos de envio, impuestos, membresias y descuentos sin precio final.
+- Las primeras lineas de los fragmentos son el titulo y el encabezado de la pagina: sirven para saber la presentacion (por ejemplo "bloque de 2.500 gramos") de los precios que aparecen despues.
+- No calcules, no conviertas monedas ni unidades y no deduzcas. Copia los numeros como aparecen.
+- Cada oferta lleva "cita": fragmento COPIADO TEXTUALMENTE de los fragmentos (maximo 200 caracteres) que contiene el precio. Una oferta sin cita textual sera descartada.
+- "cantidad" y "unidad" describen lo que se compra por ese precio, solo si el texto lo dice (por ejemplo 500 g, 1 kg, bulto de 50 kg, libra). Si el precio es "por kilo", "por libra" o "por tonelada", cantidad es 1 y la unidad es esa. Si el texto no dice cuanto trae, usa null en cantidad y unidad.
+- "unidades" es cuantas piezas trae la presentacion cuando el texto lo dice (2 steaks de 360 g cada uno: unidades 2, cantidad 360, unidad g); si no, 1.
+- "moneda" es el codigo ISO (COP, MXN, USD, EUR, BRL, etc.). Si el texto solo muestra "$", usa la moneda probable del sitio; si no hay ninguna pista, usa null.
+- "condicion": "mayorista" solo si el texto habla de mayoreo, bulto, tonelada, volumen o distribuidores; "detal" si es precio de tienda al consumidor; si no queda claro, "no_indica".
+
+Esquema:
+{"ofertas":[{"descripcion":"producto tal como lo nombra la pagina","unidades":1,"cantidad":500,"unidad":"g | kg | lb | oz | ton | l | ml | unidad | otro","presentacion":"texto corto de la presentacion","precio":0,"moneda":"COP","condicion":"detal | mayorista | no_indica","cita":"..."}]}
+
+Maximo 8 ofertas por pagina. Si no hay ninguna oferta del producto, responde {"ofertas":[]}.`;
+
+// Moneda probable de una pagina: primero el dominio (.co, .mx...) y, si no alcanza, las pistas del texto (ciudades, paises, codigos)
+const PISTAS_MONEDA = [
+  ['COP', /\bcop\b|colombia|bogota|medellin|barranquilla|cartagena|pesos colombianos/g],
+  ['MXN', /\bmxn\b|mexico|cdmx|monterrey|guadalajara|pesos mexicanos/g],
+  ['ARS', /\bars\b|argentina|buenos aires|pesos argentinos/g],
+  ['CLP', /\bclp\b|chile|santiago de chile|pesos chilenos/g],
+  ['PEN', /\bpen\b|peru\b|soles/g],
+  ['BRL', /\bbrl\b|brasil|brazil|r\$/g],
+  ['EUR', /\beur\b|espana|spain|iva incluido/g],
+  ['USD', /\busd\b|us\$|dolares|dollars/g],
+];
+function monedaProbable(texto, dom) {
+  const porDominio = MONEDA_TLD[String(dom || '').split('.').pop()];
+  if (porDominio) return porDominio;
+  const t = norm(texto);
+  const cuentas = PISTAS_MONEDA.map(([m, re]) => [m, (t.match(re) || []).length]).sort((a, b) => b[1] - a[1]);
+  return cuentas[0][1] >= 2 && cuentas[0][1] > cuentas[1][1] ? cuentas[0][0] : null;
+}
+
+// Lineas de una pagina que traen un precio, con la linea anterior y la siguiente como contexto
+function ventanasDePrecio(texto, max) {
+  const lineas = String(texto ?? '').split('\n');
+  const reMoneda = /(\$|us\$|r\$|€|£|usd|cop|mxn|brl|eur|ars|clp|pen|gbp|pesos?)\s?\d|\d[\d.,]*\s?(\$|€|usd|cop|mxn|brl|eur|pesos?)/i;
+  const idx = new Set();
+  let n = 0;
+  lineas.forEach((l, i) => { if (l.length < 400 && reMoneda.test(l)) { n++; idx.add(i - 1); idx.add(i); idx.add(i + 1); } });
+  const out = [];
+  let largo = 0;
+  [...idx].filter((i) => i >= 0 && i < lineas.length).sort((a, b) => a - b).forEach((i) => {
+    const t = lineas[i].slice(0, 220);
+    if (largo + t.length + 1 <= (max || 2200)) { out.push(t); largo += t.length + 1; }
+  });
+  return { texto: out.join('\n'), n_precios: n };
+}

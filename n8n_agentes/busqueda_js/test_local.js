@@ -47,7 +47,8 @@ const interpretarStub = (texto) => ({
   content: [{ text: JSON.stringify({
     producto: 'harina de trigo panadera', nombre_en: 'bakery wheat flour', sinonimos: ['harina de trigo', 'harina panadera'],
     especificacion: 'uso en panaderia', categoria: 'perecedero', cantidad_pedido: '5 toneladas', cantidad_anual: '60 toneladas',
-    pais_destino: 'Colombia', ciudad_destino: 'Bogota', venta: 'mayor', requisitos_calidad: ['proteina 11 a 13 por ciento'],
+    pais_destino: /colombia|bogota/i.test(texto) ? 'Colombia' : null, ciudad_destino: /bogota/i.test(texto) ? 'Bogota' : null,
+    venta: /al por mayor/i.test(texto) ? 'mayor' : /al detal/i.test(texto) ? 'detal' : 'no_especificado', requisitos_calidad: [],
     certificaciones_requeridas: ['INVIMA'], paises_origen_probables: ['Colombia', 'Argentina', 'Canada'],
     kraljic_provisional: { cuadrante: 'apalancable', razon: 'Muchos molinos capaces y alto gasto anual.' },
     supuestos: ['Se asume entrega en Bogota.'], preguntas_pendientes: [],
@@ -55,6 +56,7 @@ const interpretarStub = (texto) => ({
       fabricantes: [{ q: 'molino harina de trigo panadera Colombia fabricante', idioma: 'es' }, { q: 'bakery wheat flour manufacturer exporter', idioma: 'en' }, { q: 'farine de ble boulangerie fabricant', idioma: 'fr' }],
       distribuidores: [{ q: 'distribuidor mayorista harina de trigo Bogota', idioma: 'es' }, { q: 'proveedores harina panaderia por bulto Bogota', idioma: 'es' }],
       precios: [{ q: 'precio harina de trigo por tonelada Colombia 2026', idioma: 'es' }, { q: 'wheat flour price per ton FOB', idioma: 'en' }],
+      detal: [{ q: 'precio harina de trigo por kilo Bogota supermercado', idioma: 'es' }, { q: 'donde comprar harina de trigo panadera Bogota', idioma: 'es' }],
       registros_oficiales: [{ q: 'INVIMA registro sanitario harina de trigo molinos', idioma: 'es' }],
       gremios: [{ q: 'molinos de trigo asociacion afiliados Colombia', idioma: 'es' }, { q: 'flour millers association members', idioma: 'en' }],
       reputacion: [{ q: 'molino harina de trigo opiniones reclamos', idioma: 'es' }],
@@ -77,6 +79,24 @@ const extraerStub = (finalistas, cuerpo, i) => {
   };
   if (i === 0) campos.moq = { valor: '500 toneladas', cita: 'Minimo de pedido 500 toneladas por contenedor' }; // inventado a proposito: debe ser descartado
   return { content: [{ text: JSON.stringify(campos) }], usage: { input_tokens: 1500, output_tokens: 350 } };
+};
+
+// Extraccion de precios simulada: lee las lineas con "$" de los fragmentos y arma ofertas con cita textual
+const preciosStub = (cuerpo) => {
+  const c = cuerpo.messages[0].content;
+  const moneda = (c.match(/MONEDA PROBABLE DEL SITIO: (\w+)/) || [])[1];
+  const lineas = c.slice(c.indexOf('FRAGMENTOS:') + 11).split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean);
+  const ofertas = [];
+  lineas.forEach((l, i) => {
+    const m = l.match(/\$\s?([\d.,]+)/);
+    if (!m || ofertas.length >= 8) return;
+    const precio = Number(m[1].replace(/\./g, '').replace(',', '.'));
+    if (!Number.isFinite(precio) || precio <= 0) return;
+    const q = (l + ' ' + (lineas[i - 1] || '')).match(/(\d+(?:[.,]\d+)?)\s?(kg|kilos?|gr|g|lb|libras?)\b/i);
+    ofertas.push({ descripcion: 'harina', unidades: 1, cantidad: q ? Number(q[1].replace(',', '.')) : null, unidad: q ? q[2].toLowerCase().replace(/^kilos?$/, 'kg').replace(/^libras?$/, 'lb') : null,
+      presentacion: q ? q[0] : '', precio, moneda: moneda && moneda !== 'desconocida' ? moneda : null, condicion: 'no_indica', cita: l.slice(0, 200) });
+  });
+  return { content: [{ text: JSON.stringify({ ofertas }) }], usage: { input_tokens: 600, output_tokens: 250 } };
 };
 
 const narrativaStub = () => ({
@@ -110,14 +130,18 @@ const narrativaStub = () => ({
   console.log('  finalistas:', l.finalistas.map((f) => `${f.dominio}[${f.tipo}] emails=${f.emails.length} tel=${f.telefonos.length} certs=${f.certs.join('/')}`).join('\n              '));
   await nodo('Preparar extracciones', '06_preparar_extraccion.js', salidas['Leer paginas']);
   const e = salidas['Preparar extracciones'];
-  console.log('  extracciones a pedir:', e.length, '| tamano medio del texto enviado a Claude:', Math.round(e.reduce((s, x) => s + x.json.claude_body.messages[0].content.length, 0) / e.length), 'caracteres');
+  console.log('  extracciones a pedir:', e.length, `(finalistas ${e.filter((x) => x.json.tipo_item === 'finalista').length}, paginas de precio ${e.filter((x) => x.json.tipo_item === 'precios').length})`, '| tamano medio del texto enviado a Claude:', Math.round(e.reduce((s, x) => s + x.json.claude_body.messages[0].content.length, 0) / e.length), 'caracteres');
   if (hasta <= 6) return;
-  salidas['Claude: extraer datos'] = e.map((_, i) => ({ json: extraerStub(l.finalistas, e[i].json.claude_body, i) }));
+  let fi = 0;
+  salidas['Claude: extraer datos'] = e.map((it) => ({ json: it.json.omitir ? { content: [{ text: 'ok' }], usage: {} } : it.json.tipo_item === 'precios' ? preciosStub(it.json.claude_body) : extraerStub(l.finalistas, it.json.claude_body, fi++) }));
   await nodo('Verificar y calificar', '07_verificar.js', salidas['Claude: extraer datos']);
   salidas['Claude: redactar informe'] = [{ json: narrativaStub() }];
   await nodo('Armar informe', '08_informe.js', salidas['Claude: redactar informe']);
   const inf = salidas['Armar informe'][0].json;
-  fs.writeFileSync(path.join(dir, '_prueba_informe.md'), inf.output, 'utf8');
+  fs.writeFileSync(path.join(dir, '_prueba_informe.md'), salidas['Armar informe'][1].binary ? Buffer.from(salidas['Armar informe'][1].binary.data.data, 'base64').toString('utf8') : inf.output, 'utf8');
+  fs.writeFileSync(path.join(dir, '_prueba_chat.md'), inf.output, 'utf8');
+  const vv = salidas['Verificar y calificar'][0].json;
+  console.log('  ofertas:', vv.ofertas.length, '| stats:', JSON.stringify(vv.stats_precios), '| fx:', JSON.stringify(vv.fx));
   console.log('  informe: ' + inf.output.length + ' caracteres -> _prueba_informe.md');
   console.log(`TOTAL ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 })().catch((err) => { console.error('ERROR:', err); process.exit(1); });

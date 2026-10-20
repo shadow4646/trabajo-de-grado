@@ -45,13 +45,83 @@ if (!narr || v.sin_finalistas) {
 
 // ---------- Secciones generadas por codigo ----------
 const L = [];
-L.push(`# Informe de sourcing: ${plan.producto}`);
+// ---------- Bloque de precios: lo primero que se lee ----------
+const miles = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+const num = (x) => (Math.abs(x) >= 100 ? miles(x) : String(Math.round(x * 100) / 100).replace('.', ','));
+const mdest = v.moneda_destino || 'COP';
+const baseDom = v.base_dominante || 'kg';
+const urlMd = (u) => String(u).replace(/\)/g, '%29').replace(/\|/g, '%7C').replace(/\s/g, '%20');
+const ofertasV = (v.ofertas || []).filter((o) => !o.fuera_de_destino);
+const otrosPaises = v.ofertas_otros_paises || 0;
+const st = v.stats_precios || {};
+const destinoTxt = `${[plan.ciudad_destino, plan.pais_destino].filter(Boolean).join(', ') || NE}${plan.destino_por_defecto ? ' (asumido, no lo indicaste)' : ''}`;
+const ordenOferta = (a, b) => ((a.precio_base_destino ?? Infinity) - (b.precio_base_destino ?? Infinity)) || ((a.precio_base ?? Infinity) - (b.precio_base ?? Infinity));
+const comparableTxt = (o) => (o.precio_base_destino !== null ? `${num(o.precio_base_destino)} ${mdest}/${o.base}` : (o.precio_base !== null && o.moneda ? `${num(o.precio_base)} ${o.moneda}/${o.base} (sin pasar a ${mdest})` : (o.precio_base !== null ? 'moneda no clara' : 'sin cantidad clara')));
+const esComparable = (o) => o.precio_base_destino !== null || (o.precio_base !== null && !!o.moneda);
+const cantidadTxt = (o) => (o.cantidad_total ? `${num(o.cantidad_total)} ${o.base}` : celda(String(o.presentacion || o.descripcion || 'cantidad no clara').slice(0, 50)));
+const filaOferta = (o, i) => `| ${i + 1} | ${celda(o.nombre)} | ${cantidadTxt(o)} | ${num(o.precio)} ${o.moneda || 'moneda?'} | **${comparableTxt(o)}** | [${o.dominio}](${urlMd(o.url)}) |`;
+const tablaOfertas = (arr, max) => ['| # | Proveedor | Cantidad | Precio publicado | Precio comparable | Donde |', '|---|---|---|---|---|---|', ...[...arr].sort(ordenOferta).slice(0, max || 99).map(filaOferta)];
+const lineaStat = (s, etiqueta) => (s
+  ? (s.n === 1 ? `- **${etiqueta}:** ${num(s.minimo)} ${mdest}/${baseDom}, segun 1 oferta.`
+    : s.n < 4 ? `- **${etiqueta}:** de ${num(s.minimo)} a ${num(s.maximo)} ${mdest}/${baseDom}, segun ${s.n} ofertas.`
+    : `- **${etiqueta}:** lo tipico es ${num(s.mediana)} ${mdest}/${baseDom} (la mitad de las ofertas esta entre ${num(s.q1)} y ${num(s.q3)}; minimo ${num(s.minimo)}, maximo ${num(s.maximo)}), segun ${s.n} ofertas.`)
+  : null);
+const lineasResumen = [];
+if (st.detal) lineasResumen.push(lineaStat(st.detal, 'Al detal'));
+else if (plan.venta !== 'mayor') lineasResumen.push('- **Al detal:** no se encontraron precios comparables.');
+if (st.mayor) lineasResumen.push(lineaStat(st.mayor, 'Al por mayor'));
+else if (plan.venta !== 'detal') lineasResumen.push('- **Al por mayor:** no hay precios publicos comparables; se piden por cotizacion (borrador al final del informe).');
+const fx = v.fx || {};
+if (fx.fuente) lineasResumen.push(`- Tipo de cambio a ${mdest}: ${fx.fuente}${fx.fecha ? ', actualizado ' + fx.fecha : ''}. Es una referencia, no una tasa oficial.`);
+const GRUPOS_VENTA = [['detal', 'Al detal'], ['mayor', 'Al por mayor'], ['sin_clasificar', 'Venta no indicada']];
+const porVenta = (t) => ofertasV.filter((o) => o.venta === t);
+const hayPorTamano = ofertasV.some((o) => o.venta_por_tamano);
+const notaPrecios = `Los precios son los publicados en cada pagina el dia de la consulta y pueden cambiar. El precio comparable divide el precio por la cantidad que la pagina indica; si no era clara, no se calcula. Pueden faltar flete e impuestos.${otrosPaises ? ` Se omitieron ${otrosPaises} precios al detal en monedas de otros paises.` : ''}${hayPorTamano ? ' Cuando la pagina no dice si es detal o mayor, se clasifico por tamano (hasta 10 kg detal, desde 25 kg mayor).' : ''}`;
+
+L.push(`# Precios de ${plan.producto}`);
 L.push('');
-L.push(`Fecha de consulta: ${v.fecha} | Modo: ${v.modo} | Prioridad del ranking: ${v.prioridad === 'riesgo' ? 'riesgo y continuidad primero' : 'precio primero'}`);
+L.push(`Consulta del ${v.fecha} | Destino: ${destinoTxt} | Modo: ${v.modo}`);
 L.push('');
-L.push('> Este informe es un escaneo de mercado previo a una cotizacion formal (RFQ). Con informacion publica no se pueden conocer precios por volumen, plazos de pago ni capacidad real: esos puntos aparecen como preguntas para el proveedor. Los datos de cada ficha se verificaron por codigo contra el texto de la pagina.');
+L.push('## Cuanto cuesta');
+lineasResumen.forEach((t) => L.push(t));
 L.push('');
+L.push('## Cuadro de precios');
+if (!ofertasV.length) {
+  L.push('No se encontraron precios publicos verificables en las paginas leidas. Los precios por volumen se piden por cotizacion: el borrador esta al final del informe.');
+  L.push('');
+} else {
+  for (const [clave, titulo] of GRUPOS_VENTA) {
+    const arr = porVenta(clave);
+    if (!arr.length) { if (clave !== 'sin_clasificar' && !(clave === 'detal' && plan.venta === 'mayor') && !(clave === 'mayor' && plan.venta === 'detal')) { L.push(`### ${titulo}`); L.push('No se encontraron precios publicos.'); L.push(''); } continue; }
+    L.push(`### ${titulo}`);
+    tablaOfertas(arr).forEach((t) => L.push(t));
+    L.push('');
+  }
+  L.push(`> ${notaPrecios}`);
+  L.push('');
+}
+// Donde conseguirlo: primero los proveedores con precio (del mas barato al mas caro), luego los finalistas sin precio publicado
+const paginaDe = new Map((v.paginas || []).map((g) => [g.dominio, g]));
+const mejorPorDominio = new Map();
+[...ofertasV].sort(ordenOferta).forEach((o) => { if (!mejorPorDominio.has(o.dominio)) mejorPorDominio.set(o.dominio, o); });
+const hayCompar = esComparable;
+const fuentes = [];
+for (const o of mejorPorDominio.values()) fuentes.push({ dominio: o.dominio, nombre: o.nombre, url: o.url, mejor: hayCompar(o) ? comparableTxt(o) : 'sin precio comparable', cand: cands.find((c) => c.dominio === o.dominio) });
+for (const c of cands) if (!mejorPorDominio.has(c.dominio)) fuentes.push({ dominio: c.dominio, nombre: nombreDe(c), url: c.url, mejor: 'sin precio publicado', cand: c });
+const contactoDe = (f) => {
+  const g = paginaDe.get(f.dominio);
+  return [f.cand?.emails?.[0] || g?.emails?.[0], f.cand?.telefonos?.[0] || g?.telefonos?.[0]].filter(Boolean).join(' / ') || NE;
+};
+if (fuentes.length) {
+  L.push('## Donde conseguirlo');
+  L.push('| # | Proveedor | Mejor precio | Contacto | Donde |');
+  L.push('|---|---|---|---|---|');
+  fuentes.slice(0, 12).forEach((f, i) => L.push(`| ${i + 1} | ${celda(f.nombre)} | ${f.mejor} | ${celda(contactoDe(f))} | [${f.dominio}](${urlMd(f.url)}) |`));
+  L.push('');
+}
 L.push(narr);
+L.push('');
+L.push('> Este informe es un escaneo de mercado previo a una cotizacion formal (RFQ): con informacion publica no se conocen precios por volumen, plazos de pago ni capacidad real. Los datos de cada ficha se verificaron por codigo contra el texto de la pagina.');
 L.push('');
 
 L.push('## Supuestos declarados y clasificacion Kraljic provisional');
@@ -68,7 +138,7 @@ L.push(`- Requisitos de calidad: ${lista(plan.requisitos_calidad)}`);
 L.push('');
 
 if (cands.length) {
-  L.push('## Tabla comparativa');
+  L.push('## Calificacion de proveedores');
   L.push('| # | Proveedor | Tipo | Identidad | Certificaciones | Precio de referencia | Cobertura | Menciones indep. | Veredicto |');
   L.push('|---|---|---|---|---|---|---|---|---|');
   cands.forEach((c, i) => L.push(`| ${i + 1} | ${celda(nombreDe(c))} | ${c.cal.tipo} | ${c.cal.identidad} | ${c.cal.certificaciones} | ${celda(precioTxt(c))} | ${c.cal.cobertura} | ${c.menciones.length} | ${celda(c.veredicto)} |`));
@@ -184,7 +254,8 @@ const mdArchivo = sinGuiones(L.join('\n')).replace(/\n{3,}/g, '\n\n');
 
 // ---------- HTML ----------
 const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>')
-  .replace(/(https?:\/\/[^\s<)]+)/g, '<a href="$1">$1</a>');
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
+  .replace(/(?<!["'>=])(https?:\/\/[^\s<)]+)/g, '<a href="$1">$1</a>');
 const mdAHtml = (md) => {
   const out = [];
   let lista = false;
@@ -222,7 +293,36 @@ th,td{border:1px solid #bbb;padding:5px 8px;text-align:left;vertical-align:top}t
 code{background:#f0f0f0;padding:1px 4px}a{color:#0645ad;word-break:break-all}</style></head><body>${mdAHtml(mdArchivo)}</body></html>`;
 
 const base = `${CARPETA_INFORMES}\\sourcing_${slug(plan.producto)}_${v.fecha}_${v.modo}`;
-const salidaChat = `${mdArchivo}\n---\nArchivos guardados en tu equipo:\n- ${base}.html\n- ${base}.md`;
+// Respuesta corta para el chat: precios, donde conseguirlo y el resumen. El informe completo queda en los archivos.
+const C = [];
+C.push(`## Precios de ${plan.producto}`);
+C.push(`Consulta del ${v.fecha} | Destino: ${destinoTxt}`);
+C.push('');
+lineasResumen.forEach((t) => C.push(t));
+C.push('');
+const comparable = esComparable;
+for (const [clave, titulo] of GRUPOS_VENTA) {
+  const arr = porVenta(clave).filter(comparable);
+  if (!arr.length) continue;
+  C.push(`**${titulo}** (${arr.length} oferta${arr.length === 1 ? '' : 's'} con precio comparable${arr.length > 8 ? ', las 8 mas baratas' : ''})`);
+  tablaOfertas(arr, 8).forEach((t) => C.push(t));
+  C.push('');
+}
+const sinCantidad = ofertasV.filter((o) => !comparable(o)).length;
+if (sinCantidad) { C.push(`Hay ${sinCantidad} precio${sinCantidad === 1 ? '' : 's'} mas sin cantidad clara (no se pueden comparar); estan en el informe completo.`); C.push(''); }
+if (!ofertasV.length) { C.push('No se encontraron precios publicos verificables. Los precios por volumen se piden por cotizacion.'); C.push(''); }
+if (fuentes.length) {
+  C.push('**Donde conseguirlo**');
+  fuentes.slice(0, 6).forEach((f) => C.push(`- **${f.nombre}**: ${f.mejor}. Contacto: ${contactoDe(f)}. ${f.url}`));
+  C.push('');
+}
+const resumenNarr = narr.split(/\n##\s+Riesgos/)[0].replace(/^##[^\n]*\n/, '').trim();
+if (resumenNarr && !v.sin_finalistas) { C.push(resumenNarr); C.push(''); }
+(v.riesgos || []).slice(0, 3).forEach((r) => C.push(`- Ojo: ${r}`));
+C.push('');
+C.push(`Informe completo (fichas, borrador de cotizacion y fuentes): ${base}.html`);
+C.push(`Costo de esta consulta: unos ${costo.toFixed(2)} USD en IA.`);
+const salidaChat = sinGuiones(C.join('\n')).replace(/\n{3,}/g, '\n\n');
 const binHtml = await this.helpers.prepareBinaryData(Buffer.from(html, 'utf8'), 'informe.html', 'text/html');
 const binMd = await this.helpers.prepareBinaryData(Buffer.from(mdArchivo, 'utf8'), 'informe.md', 'text/markdown');
 

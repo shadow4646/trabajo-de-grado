@@ -33,6 +33,12 @@ docker run -d --name searxng --restart unless-stopped -p 127.0.0.1:8888:8080 -v 
 
 Consulta de prueba: `http://127.0.0.1:8888/search?q=harina+de+trigo&format=json`
 
+## Qué devuelve el agente de proveedores
+
+Un informe centrado en precios: cuánto cuesta (rango y valor típico por kilo, al detal y al por mayor), un cuadro con proveedor, cantidad, precio publicado y precio comparable por kilo en la moneda del destino, y dónde conseguirlo con contacto. Si no se indica destino se asume Colombia (Bogotá). El chat recibe un resumen corto y el informe completo (fichas, borrador de cotización, cobertura y fuentes) se guarda en HTML y Markdown. Cada precio se verifica por código contra el texto de la página; los precios al por mayor casi nunca son públicos y se piden por cotización.
+
+Los tipos de cambio salen de [ExchangeRate-API](https://www.exchangerate-api.com) (`open.er-api.com`, gratuita y sin clave, solo como referencia). Es la única llamada a un servicio externo, además de Claude y de los buscadores que consulta SearXNG.
+
 ## Probar la búsqueda de proveedores sin gastar
 
 ```

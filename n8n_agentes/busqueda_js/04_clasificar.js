@@ -35,7 +35,7 @@ const candidatos = [...porDominio.values()].map((g) => ({
 })).sort((a, b) => b.puntaje - a.puntaje);
 
 // En una compra al por mayor no se gastan lecturas en tiendas y supermercados en linea (ni en avisos clasificados)
-const NO_LEER = ['noticia', 'academico', 'pdf', ...(plan.venta === 'mayor' ? ['tienda'] : [])];
+const NO_LEER = ['noticia', 'academico', 'pdf', 'restaurante', ...(plan.venta === 'mayor' ? ['tienda'] : [])];
 let dirs = 0;
 const aLeer = [];
 for (const c of candidatos) {

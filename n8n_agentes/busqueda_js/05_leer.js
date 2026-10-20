@@ -76,8 +76,13 @@ for (const lote of trozos(p.a_leer, 6)) {
   res.forEach((r, i) => {
     const c = lote[i];
     const texto = htmlATexto(r.html);
+    const vp = ventanasDePrecio(texto, 2000);
+    // El titulo y las primeras lineas (encabezado) suelen decir la presentacion: "bloque de 2.500 gramos", "x 500 g"
+    const cabecera = [...new Set([c.titulo, ...texto.split('\n').slice(0, 3)].filter(Boolean).map((l) => String(l).slice(0, 200)))];
     paginas.push({
       dominio: c.dominio, url: c.url, titulo: c.titulo, tipo: c.tipo, puntaje: c.puntaje, familias: c.familias,
+      moneda_probable: vp.n_precios ? monedaProbable(texto, c.dominio) : null,
+      habla_producto: hablaDelProducto(plan, norm(texto)), ventanas: vp.n_precios ? `${cabecera.join('\n')}\n${vp.texto}` : '', n_precios: vp.n_precios,
       estado: estadoDe(r, texto), status: r.status, motivo: r.error || null, largo: texto.length, texto, ...senales(texto),
       enlaces_contacto: r.html ? enlacesDe(r.html, c.url).filter((l) => dominio(l.url) === c.dominio && /contact|contacto|nosotros|about|quienes|acerca|empresa|perfil/i.test(norm(l.url + ' ' + l.texto))).map((l) => l.url).slice(0, 2) : [],
     });
@@ -125,6 +130,7 @@ const estadisticas = {
   vacias_js: cuenta((g) => g.estado === 'vacia_o_requiere_javascript'),
   errores: cuenta((g) => g.estado.startsWith('error')),
   otras: cuenta((g) => g.estado === 'no_es_html'),
+  con_precios: cuenta((g) => g.estado === 'ok' && g.habla_producto && g.n_precios > 0),
   paginas_extra_contacto: finalistas.filter((g) => g.leyo_contacto).length,
   ms: Date.now() - t0,
 };

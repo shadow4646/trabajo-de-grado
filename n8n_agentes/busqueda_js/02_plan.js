@@ -23,7 +23,10 @@ if (falta) {
 
 const producto = String(interp.producto).trim();
 const en = interp.nombre_en || producto;
-const pais = interp.pais_destino || null;
+const pais = interp.pais_destino || DESTINO_POR_DEFECTO.pais;
+const ciudad = interp.pais_destino ? (interp.ciudad_destino || null) : (interp.ciudad_destino || DESTINO_POR_DEFECTO.ciudad);
+const destinoPorDefecto = !interp.pais_destino;
+const venta = interp.venta || 'no_especificado';
 const detectaIdioma = (q) => (/[áéíóúñ¿]|\b(de|para|por|al|el|la|los|precio|fabricante)\b/i.test(q) ? 'es' : 'en');
 
 const fam = {};
@@ -33,13 +36,14 @@ const addFam = (f, q, idioma) => {
   (fam[f] = fam[f] || []).push({ q: t, idioma: idioma || detectaIdioma(t), familia: f });
 };
 const consultasClaude = interp.consultas || {};
-for (const f of ['fabricantes', 'distribuidores', 'precios', 'registros_oficiales', 'gremios', 'reputacion']) {
+for (const f of ['fabricantes', 'distribuidores', 'precios', 'detal', 'registros_oficiales', 'gremios', 'reputacion']) {
   for (const c of (consultasClaude[f] || [])) addFam(f, c?.q ?? c, c?.idioma);
 }
 // Consultas minimas por codigo si Claude no aporto
 if (!(fam.fabricantes || []).length) { addFam('fabricantes', `${producto} fabricante`, 'es'); addFam('fabricantes', `${en} manufacturer`, 'en'); }
 if (!(fam.distribuidores || []).length) addFam('distribuidores', `${producto} distribuidor mayorista ${pais || ''}`, 'es');
 if (!(fam.precios || []).length) { addFam('precios', `${producto} precio por mayor ${pais || ''}`, 'es'); addFam('precios', `${en} price per ton`, 'en'); }
+if (!(fam.detal || []).length) { addFam('detal', `${producto} precio por kilo ${ciudad || pais} comprar`, 'es'); addFam('detal', `donde comprar ${producto} ${ciudad || pais} supermercado`, 'es'); }
 if (!(fam.registros_oficiales || []).length && (interp.certificaciones_requeridas || []).length) addFam('registros_oficiales', `${producto} ${interp.certificaciones_requeridas[0]} empresas autorizadas`, 'es');
 // Familias deterministas (solo modo profundo)
 if (cfg.familias.includes('catalogos_pdf')) {
@@ -53,7 +57,9 @@ if (cfg.familias.includes('directorios_b2b')) {
 if (cfg.familias.includes('reputacion') && !(fam.reputacion || []).length) addFam('reputacion', `${producto} proveedor opiniones reclamos`, 'es');
 
 // Orden round-robin entre familias, para que ninguna quede sin cobertura si se alcanza el limite
-const porFam = cfg.familias.map((f) => (fam[f] || []).slice(0, f === 'directorios_b2b' ? cfg.directorios : cfg.por_familia));
+// Si la compra es solo al por mayor no se buscan tiendas al detal
+const familiasActivas = cfg.familias.filter((f) => !(f === 'detal' && venta === 'mayor'));
+const porFam = familiasActivas.map((f) => (fam[f] || []).slice(0, f === 'directorios_b2b' ? cfg.directorios : cfg.por_familia));
 const lista = [];
 const vistos = new Set();
 for (let i = 0; lista.length < cfg.max_consultas; i++) {
@@ -75,16 +81,16 @@ if (!interp.cantidad_anual && !interp.cantidad_pedido) {
   supuestos.push('No se indico cantidad: no se calcula costo total, solo comparacion cualitativa.');
   preguntas.push('Cantidad por pedido y cantidad anual.');
 }
-if (!pais) {
-  supuestos.push('No se indico pais de destino: no se evalua cobertura ni costo de importacion.');
-  preguntas.push('Pais y ciudad de destino.');
+if (destinoPorDefecto) {
+  const yaDicho = supuestos.some((s) => /asum/i.test(s) && norm(s).includes(norm(pais)));
+  if (!yaDicho) supuestos.push(`Se asumio destino ${pais}${ciudad ? ' (' + ciudad + ')' : ''} porque no se indico otro. Escribelo en tu solicitud para cambiarlo.`);
 }
-if (!interp.venta || interp.venta === 'no_especificado') supuestos.push('No se indico si la compra es al por mayor o al detal.');
+if (venta === 'no_especificado') supuestos.push('No se indico si la compra es al por mayor o al detal: se buscan precios de las dos formas.');
 
 const plan = {
   producto, nombre_en: en, sinonimos: interp.sinonimos || [], especificacion: interp.especificacion || null,
   categoria: interp.categoria || 'otro', cantidad_pedido: interp.cantidad_pedido || null, cantidad_anual: interp.cantidad_anual || null,
-  pais_destino: pais, ciudad_destino: interp.ciudad_destino || null, venta: interp.venta || 'no_especificado',
+  pais_destino: pais, ciudad_destino: ciudad, destino_por_defecto: destinoPorDefecto, venta,
   requisitos_calidad: interp.requisitos_calidad || [], certificaciones_requeridas: interp.certificaciones_requeridas || [],
   paises_origen_probables: interp.paises_origen_probables || [], kraljic: interp.kraljic_provisional || { cuadrante: 'no_determinado', razon: 'Sin datos suficientes.' },
   supuestos, preguntas_pendientes: [...new Set(preguntas)],
