@@ -85,14 +85,16 @@ for (const lote of trozos(p.a_leer, 6)) {
 }
 
 // Finalistas: paginas leidas con exito que hablan del producto y cuyo tipo sirve para comprar
-const frases = [plan.producto, plan.nombre_en, ...(plan.sinonimos || [])].filter(Boolean).map(norm);
-const tokens = [...new Set(frases.flatMap((f) => f.split(' ').filter((w) => w.length >= 4)))];
-const habla = (txt) => frases.some((f) => f && txt.includes(f)) || (tokens.length > 0 && tokens.filter((w) => txt.includes(w)).length >= Math.max(1, Math.ceil(tokens.length * 0.5)));
-const TIPOS_FINALISTA = ['fabricante_probable', 'distribuidor_probable', 'tienda', 'otro'];
+const habla = (txt) => hablaDelProducto(plan, txt);
+// En una compra al por mayor, las tiendas y los supermercados en linea no son proveedores
+const TIPOS_FINALISTA = ['fabricante_probable', 'distribuidor_probable', 'otro', ...(plan.venta === 'mayor' ? [] : ['tienda'])];
+const destPais = norm(plan.pais_destino || '');
+const destCiudad = norm(plan.ciudad_destino || '');
+const nombraDestino = (txt) => (destPais.length >= 4 && txt.includes(destPais)) || (destCiudad.length >= 4 && txt.includes(destCiudad));
 
 const finalistas = paginas
   .filter((g) => g.estado === 'ok' && TIPOS_FINALISTA.includes(g.tipo) && habla(norm(g.texto)))
-  .map((g) => ({ ...g, rank: g.puntaje + (g.emails.length ? 1 : 0) + (g.telefonos.length ? 0.5 : 0) + (g.certs.length ? 0.5 : 0) }))
+  .map((g) => ({ ...g, rank: g.puntaje + (g.emails.length ? 1 : 0) + (g.telefonos.length ? 0.5 : 0) + (g.certs.length ? 0.5 : 0) + (nombraDestino(norm(g.texto)) ? 2 : 0) }))
   .sort((a, b) => b.rank - a.rank)
   .slice(0, cfg.finalistas);
 

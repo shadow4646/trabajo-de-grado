@@ -161,10 +161,21 @@ function clasificarResultado(r) {
   if (/asociacion|federacion|gremio|association|federation|camara de comercio|chamber/.test(t) && !/fabricamos|we manufacture/.test(t)) return 'gremio';
   if (/noticias|news|blog|periodico|diario|revista|magazine/.test(d + url)) return 'noticia';
   if (/market (research|report|size|analysis|insights)|cagr|informe de mercado|estudio de mercado|forecast to 20/.test(t)) return 'noticia';
-  if (/mercadolibre|amazon\.|olx\.|alibaba|ebay|aliexpress|temu/.test(d)) return 'tienda';
+  if (/mercadolibre|amazon\.|olx\.|alibaba|ebay|aliexpress|temu|rappi|exito\.com|carulla|jumbo|olimpica|alkosto|tiendasd1|d1\.com|ara\.com|linio|falabella|homecenter|walmart|carrefour|mercadona|lidl|instacart|supermercado|domicilios\.com|evisos|clasificad|segundamano|milanuncios|locanto|gumtree|craigslist/.test(d)) return 'tienda';
   if (/fabricante|manufacturer|molino|planta de|factory|fabrica |fabricamos|producimos|we manufacture|mill\b|productor/.test(t)) return 'fabricante_probable';
   if (/distribuidor|distributor|mayorista|wholesale|supplier|proveedor|comercializadora|importador|importer|exportador|exporter/.test(t)) return 'distribuidor_probable';
   return 'otro';
+}
+
+// Una pagina "habla del producto" si contiene una de sus frases completas, o la mayoria de las palabras de UNA sola frase.
+// Cada frase se evalua por separado: mezclar palabras de varios idiomas en una bolsa dejaba fuera paginas validas.
+function hablaDelProducto(plan, txtNorm) {
+  const frases = [plan.producto, plan.nombre_en, ...(plan.sinonimos || [])].filter(Boolean).map(norm);
+  return frases.some((f) => {
+    if (txtNorm.includes(f)) return true;
+    const ws = f.split(' ').filter((w) => w.length >= 4);
+    return ws.length >= 2 && ws.filter((w) => txtNorm.includes(w)).length >= Math.max(1, Math.ceil(ws.length * 0.6));
+  });
 }
 
 const PESO_TIPO = { fabricante_probable: 5, distribuidor_probable: 3.5, pdf: 2.5, gremio: 2, oficial: 2, tienda: 1.5, otro: 1, directorio: 1, noticia: 0.5, academico: 0.2, bloqueado: 0 };
@@ -178,7 +189,12 @@ function nombreMarca(titulo, dom) {
 // ---------- prompts ----------
 const PROMPT_INTERPRETAR = `Eres un analista de compras senior. Recibes la solicitud de un usuario que necesita comprar un producto o insumo (comida, materia prima, producto terminado, al por mayor o al detal). Tu tarea es interpretarla y preparar el plan de busqueda web.
 
-Responde SOLO con un objeto JSON valido, sin texto antes ni despues y sin bloques de codigo. Usa null cuando un dato no aparezca en la solicitud; nunca inventes cantidades, paises ni requisitos que el usuario no menciono. Las certificaciones o registros obligatorios por norma del pais de destino si puedes proponerlos, anotandolo en "supuestos".
+Responde SOLO con un objeto JSON valido, sin texto antes ni despues y sin bloques de codigo. Usa null cuando un dato no aparezca en la solicitud; nunca inventes cantidades, paises ni requisitos que el usuario no menciono.
+
+Reglas contra la invencion (muy importantes):
+- "requisitos_calidad" contiene SOLO lo que el usuario escribio. Nunca agregues especificaciones tecnicas tipicas del producto (porcentajes, rangos, grados, normas). Si faltan y cambiarian el resultado, formulalos como preguntas en "preguntas_pendientes".
+- "supuestos" nunca incluye precios, rangos de precio, tipos de cambio ni cifras de mercado. Solo supuestos sobre entrega, presentacion o uso, en una frase cada uno.
+- "certificaciones_requeridas" incluye solo registros o certificaciones obligatorios por norma para ese producto en el pais de destino, con nombre corto (por ejemplo INVIMA para alimentos en Colombia), y los que el usuario pidio. No pongas documentos comerciales (certificado de origen, analisis de laboratorio), eso va en la solicitud de cotizacion.
 
 Esquema:
 {
@@ -208,7 +224,7 @@ Esquema:
  }
 }
 
-Reglas para "consultas": de 3 a 4 por familia, cortas y como las escribiria una persona en un buscador. "fabricantes" mezcla espanol, ingles y el idioma de los paises de origen probables; "distribuidores" busca en el pais de destino; "precios" busca precios de referencia, listas, indices o boletines oficiales; "registros_oficiales" busca registros sanitarios, listados de empresas autorizadas o normas aplicables; "gremios" busca asociaciones, camaras y listas de afiliados; "reputacion" busca opiniones, reclamos o sanciones de proveedores de ese producto. No uses operadores site: ni filetype:, eso lo agrega el sistema. No uses guiones largos.`;
+Reglas para "consultas": de 3 a 4 por familia, cortas y como las escribiria una persona en un buscador. "fabricantes" mezcla espanol, ingles y el idioma de los paises de origen probables, y al menos dos consultas deben nombrar el pais de destino; "distribuidores" busca en el pais o la ciudad de destino y, si la venta es al por mayor, usa palabras como mayorista, por tonelada o por bulto; "precios" busca precios de referencia, listas, indices o boletines oficiales; "registros_oficiales" busca registros sanitarios, listados de empresas autorizadas o normas aplicables; "gremios" busca asociaciones, camaras y listas de afiliados; "reputacion" busca opiniones, reclamos o sanciones de proveedores de ese producto. No uses operadores site: ni filetype:, eso lo agrega el sistema. No uses guiones largos.`;
 
 const PROMPT_EXTRAER = `Extraes datos de proveedores desde el texto de una pagina web. Recibes la especificacion que busca el comprador y el texto de la pagina. Responde SOLO con un objeto JSON valido, sin texto adicional.
 
@@ -232,7 +248,8 @@ Esquema (cada campo es null o un objeto con "valor" y "cita"):
  "capacidad": {"valor": "...", "cita": "..."},
  "envio_internacional": {"valor": true, "cita": "..."}
 }
-Para "tipo": "fabricante" solo si el texto dice que la empresa produce, procesa o fabrica el producto en sus plantas; "distribuidor" o "comercializador" si dice que compra y revende. Si no queda claro, usa null.`;
+Para "tipo": "fabricante" solo si el texto dice que la empresa produce, procesa o fabrica el producto en sus plantas; "distribuidor" o "comercializador" si dice que compra y revende. La "cita" de "tipo" debe ser la frase que dice eso, no un eslogan ni una descripcion general de la marca. Si no queda claro, usa null.
+Para "precio": "condicion" es "detal" si el precio es por unidad de consumo (libra, kilo suelto, paquete, bolsa pequena) o de una tienda en linea; "mayorista" o "lista" solo si el texto lo dice (por bulto, tonelada, volumen, lista para distribuidores). Copia en "cita" el precio tal como aparece.`;
 
 const PROMPT_INFORME = `Eres un analista de compras senior que redacta la parte narrativa de un informe de sourcing previo a una cotizacion (pre-RFQ). Recibes un JSON ya verificado por codigo: la solicitud interpretada, el ranking de proveedores con sus calificaciones ordinales (Alto, Medio, Bajo, No verificable), los datos verificados de cada uno, riesgos detectados, la sensibilidad del ranking y la cobertura de la busqueda.
 
@@ -240,6 +257,10 @@ Reglas estrictas:
 - Usa SOLO datos del JSON. No inventes proveedores, precios, certificaciones, contactos, cifras ni URLs. Si algo es "No verificable" o "NO ENCONTRADO", dilo asi.
 - No repitas tablas ni listas de datos, el sistema las agrega aparte. Escribe prosa clara para una persona que debe decidir.
 - Respeta el orden del ranking recibido; explica por que el principal gana y que tendria que cumplirse para elegir al respaldo.
+- No conviertas monedas ni unidades, no calcules precios por tonelada y no cites rangos de precio esperados: usa las cifras tal como vienen en el JSON, con su moneda y unidad. Si el precio es "detal" y la compra es al por mayor, o si "comparable" es false, di que no es comparable y no lo uses para elegir al ganador por precio.
+- Las certificaciones son lo que el proveedor declara en su propio sitio. Nunca digas que estan "verificadas" ante la entidad que las emite (INVIMA, ISO u otra): di "declarada en su sitio, pendiente de confirmar con el certificado vigente".
+- No califiques la reputacion de nadie. "menciones_en_fuentes_independientes" solo cuenta otras paginas que nombran a la empresa y no mide calidad. "posibles_alertas_por_verificar" son resultados que podrian ser de empresas homonimas: presentalas como algo por verificar, nunca como un hecho.
+- Si un proveedor esta fuera del pais de destino o su cobertura es "No verificable", dilo y explica el efecto en logistica y costo sin inventar cifras.
 - Este informe es un escaneo de mercado previo a una cotizacion formal (RFQ), no una cotizacion.
 - No uses guiones largos (el caracter de raya). Usa comas, puntos, dos puntos o parentesis.
 - Escribe en espanol, en Markdown, con exactamente estas secciones:

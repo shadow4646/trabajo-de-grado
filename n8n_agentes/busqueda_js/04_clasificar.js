@@ -3,11 +3,9 @@ const p = $input.first().json;
 const cfg = p.cfg;
 const plan = p.plan;
 
-const frases = [plan.producto, plan.nombre_en, ...(plan.sinonimos || [])].filter(Boolean).map(norm);
-const tokens = [...new Set(frases.flatMap((f) => f.split(' ').filter((w) => w.length >= 4)))];
 const tld = TLD_PAIS[norm(plan.pais_destino || '')] || null;
 
-const coincideProducto = (txt) => frases.some((f) => f && txt.includes(f)) || (tokens.length > 0 && tokens.filter((w) => txt.includes(w)).length >= Math.max(1, Math.ceil(tokens.length * 0.5)));
+const coincideProducto = (txt) => hablaDelProducto(plan, txt);
 
 const puntuados = p.resultados.map((r) => {
   const tipo = clasificarResultado(r);
@@ -36,7 +34,8 @@ const candidatos = [...porDominio.values()].map((g) => ({
   puntaje: Math.round((g.mejor.puntaje + Math.min(2, (g.n - 1) * 0.5)) * 100) / 100,
 })).sort((a, b) => b.puntaje - a.puntaje);
 
-const NO_LEER = ['noticia', 'academico', 'pdf'];
+// En una compra al por mayor no se gastan lecturas en tiendas y supermercados en linea (ni en avisos clasificados)
+const NO_LEER = ['noticia', 'academico', 'pdf', ...(plan.venta === 'mayor' ? ['tienda'] : [])];
 let dirs = 0;
 const aLeer = [];
 for (const c of candidatos) {

@@ -31,7 +31,7 @@ Politécnico Grancolombiano), cuyo prototipo está construido en n8n local.
   en Claude Code y no en n8n). El workflow `W70HMXTI286LNmiE` ("Agente Supervisor n8n y Calidad de
   Decisiones") fue descartado por el usuario; quedó desactivado y pendiente de que lo borre desde
   la UI, y sus archivos se archivaron en `n8n_agentes\archivo_descartado\`.
-- Credenciales: Anthropic está en el gestor de credenciales de n8n (id `CcTGzJyAkcsKjXNE`,
+- Credenciales: Anthropic está en el gestor de credenciales de n8n (id `TinZ1eTTiTSbGGTS`,
   "Anthropic account"). Tavily y PDFShift usan credenciales Header Auth de n8n (nodos "HTTP
   Request" y "HTTP Request1"/"Generar PDF del Informe"); en n8n 2.8.4 `$env` está bloqueado por
   defecto, así que no se usa. Las credenciales Header Auth las crea el usuario en la UI.

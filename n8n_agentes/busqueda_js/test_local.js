@@ -80,7 +80,7 @@ const extraerStub = (finalistas, cuerpo, i) => {
 };
 
 const narrativaStub = () => ({
-  content: [{ text: '## Resumen ejecutivo y recomendacion\n(simulado)\n\n## Lectura de cada proveedor\n(simulado)\n\n## Riesgos y plan B\n(simulado)\n\n## Sensibilidad\n(simulado)' }],
+  content: [{ text: '## Resumen ejecutivo y recomendacion\n(simulado) Hay varios finalistas. El precio equivale a USD 390-410 por tonelada, dentro del rango esperado.\n\n## Lectura de cada proveedor\n(simulado)\n\n## Riesgos y plan B\n(simulado)\n\n## Sensibilidad\n(simulado)' }],
   usage: { input_tokens: 2500, output_tokens: 700 },
 });
 

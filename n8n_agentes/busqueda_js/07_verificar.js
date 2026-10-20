@@ -11,6 +11,13 @@ let camposTotales = 0;
 let camposDescartados = 0;
 const candidatos = [];
 
+const compacto = (s) => norm(s).replace(/[^a-z0-9]/g, '');
+// Palabras que por si solas no identifican a una empresa: un nombre hecho solo de ellas coincidiria con cualquier pagina
+const GENERICAS = ['distribuidora', 'distribuidor', 'mayorista', 'mayoristas', 'comercializadora', 'comercializador', 'harinas', 'harina', 'harinera', 'panaderia', 'panadera', 'panificadora', 'molinos', 'molino', 'productos', 'alimentos', 'insumos', 'industrias', 'industria', 'empresa', 'proveedores', 'proveedor', 'tienda', 'almacen', 'suministros', 'importadora', 'exportadora', 'colombia', 'bogota', 'online'].sort((a, b) => b.length - a.length);
+const esGenerica = (nombre) => GENERICAS.reduce((t, g) => t.split(g).join(''), compacto(nombre)).length < 4;
+const tokensProducto = [...new Set([plan.producto, plan.nombre_en, ...(plan.sinonimos || [])].filter(Boolean).flatMap((s) => norm(s).split(' ').filter((w) => w.length >= 5)))];
+const esNombreDeProducto = (txt) => tokensProducto.some((w) => norm(txt).includes(w));
+
 // ---------- 1. Parseo y verificacion de citas ----------
 items.forEach((it, i) => {
   const meta = ext[i]?.json;
@@ -30,6 +37,15 @@ items.forEach((it, i) => {
     const cita = String(campo.cita ?? '').trim();
     if (cita.length < 6) { camposDescartados++; descartados.push({ campo: nombre, motivo: 'sin cita textual' }); return null; }
     if (!textoNorm.includes(norm(cita))) { camposDescartados++; descartados.push({ campo: nombre, motivo: 'la cita no aparece en la pagina' }); return null; }
+    if (nombre === 'tipo') {
+      // Que la cita exista en la pagina no basta: tiene que decir lo que el tipo afirma (un eslogan no prueba que sea fabricante)
+      const t = norm(campo.valor);
+      const ct = norm(cita);
+      const dice = t === 'fabricante' ? /fabric|produc|elabor|molin|planta|manufactur|procesa|moliend|cultiv|factory|\bmill\b/.test(ct)
+        : (t === 'distribuidor' || t === 'comercializador') ? /distribu|comercializ|mayorista|import|revend|wholesale|supplier|proveedor|catalogo|tienda/.test(ct)
+        : true;
+      if (!dice) { camposDescartados++; descartados.push({ campo: nombre, motivo: 'la cita no respalda el tipo declarado' }); return null; }
+    }
     if (nombre === 'precio') {
       const v = Number(campo.valor);
       if (!Number.isFinite(v)) { camposDescartados++; descartados.push({ campo: nombre, motivo: 'valor no numerico' }); return null; }
@@ -50,19 +66,20 @@ items.forEach((it, i) => {
     capacidad: verificar(data.capacidad, 'capacidad'), envio: verificar(data.envio_internacional, 'envio_internacional'),
     descartados,
   };
-  c.marca_dom = norm(f.dominio.split('.')[0]).replace(/[^a-z0-9]/g, '');
-  c.marca_emp = norm(c.empresa?.valor || '').replace(/[^a-z0-9]/g, '');
+  // El modelo a veces devuelve el nombre del producto como si fuera la empresa: en ese caso se usa el dominio
+  c.nombre = (c.empresa?.valor && !esNombreDeProducto(c.empresa.valor)) ? String(c.empresa.valor).trim() : f.dominio;
+  c.marca_dom = compacto(f.dominio.split('.')[0]);
+  c.marca_emp = esGenerica(c.nombre) ? '' : compacto(c.nombre);
   candidatos.push(c);
 });
 
 // ---------- 2. Menciones en fuentes independientes y reputacion ----------
-const compacto = (s) => norm(s).replace(/[^a-z0-9]/g, '');
 const NEGATIVAS = /estafa|fraude|scam|reclamo|queja|denuncia|sancion|multa|retiro del mercado|recall|clausura|prohibid/;
 const consultasReputacion = [];
 leer.motores_busqueda = leer.motores_busqueda || {};
 let primeroRep = true;
 for (const lote of trozos(candidatos, 2)) {
-  const nombre = (c) => (c.empresa?.valor || c.titulo.split(/[|\-:]/)[0] || c.dominio).trim();
+  const nombre = (c) => c.nombre;
   if (!primeroRep) await sleep(leer.cfg?.pausa_ms || 0);
   primeroRep = false;
   const res = await Promise.all(lote.map((c) => buscarSearx(this, { q: `"${nombre(c)}" ${plan.producto} opiniones reclamos`, idioma: 'es' })));
@@ -75,7 +92,8 @@ for (const lote of trozos(candidatos, 2)) {
 const fuentesGenerales = leer.resultados || [];
 for (const c of candidatos) {
   const toks = [c.marca_dom, c.marca_emp].filter((t) => t && t.length >= 5);
-  const menciona = (r) => r.dominio !== c.dominio && toks.some((t) => compacto(`${r.titulo} ${r.contenido}`).includes(t));
+  // Un dominio que contiene el nombre de la marca pero no es el del proveedor suele ser una empresa homonima: no cuenta
+  const menciona = (r) => r.dominio !== c.dominio && !toks.some((t) => compacto(r.dominio).includes(t)) && toks.some((t) => compacto(`${r.titulo} ${r.contenido}`).includes(t));
   const todas = [...fuentesGenerales, ...(c.rep_resultados || [])];
   c.menciones = [...new Set(todas.filter(menciona).map((r) => r.dominio))];
   c.alertas = (c.rep_resultados || []).filter((r) => menciona(r) && NEGATIVAS.test(norm(`${r.titulo} ${r.contenido}`))).slice(0, 3).map((r) => ({ url: r.url, titulo: r.titulo.slice(0, 100) }));
@@ -90,9 +108,15 @@ const tldDest = TLD_PAIS[dest] || null;
 
 const certsDe = (c) => [...new Set([...c.certificaciones.map((x) => norm(x.valor)), ...c.certs_codigo.map(norm)])];
 
+// Un precio al detal no sirve como referencia para una compra al por mayor
+const precioDetalEnMayor = (c) => plan.venta === 'mayor' && !!c.precio && norm(c.precio.condicion) === 'detal';
+// Un precio sin unidad (37 USD, pero por que?) no se puede comparar con nada
+const precioSinUnidad = (c) => !!c.precio && ['', 'no_indica', 'null', 'undefined', 'n/a'].includes(norm(c.precio.unidad));
+const precioNoComparable = (c) => precioDetalEnMayor(c) || precioSinUnidad(c);
+
 // Comparacion numerica de precios solo si hay 2 o mas con la misma moneda y unidad
 const grupos = {};
-candidatos.filter((c) => c.precio).forEach((c) => { const k = `${norm(c.precio.moneda)}|${norm(c.precio.unidad)}`; (grupos[k] = grupos[k] || []).push(c); });
+candidatos.filter((c) => c.precio && !precioNoComparable(c)).forEach((c) => { const k = `${norm(c.precio.moneda)}|${norm(c.precio.unidad)}`; (grupos[k] = grupos[k] || []).push(c); });
 Object.values(grupos).forEach((g) => { if (g.length >= 2) g.sort((a, b) => Number(a.precio.valor) - Number(b.precio.valor)).forEach((c, i) => { c.precio_rango = i; c.precio_comparable = true; }); });
 
 for (const c of candidatos) {
@@ -109,21 +133,21 @@ for (const c of candidatos) {
   if (!dest) cob = 'No evaluada';
   else if ((c.pais && norm(c.pais.valor).includes(dest)) || (tldDest && (c.dominio.endsWith('.' + tldDest) || c.dominio.endsWith('.com.' + tldDest)))) cob = 'Local';
   else if (c.envio && c.envio.valor === true) cob = 'Envia al exterior (declarado)';
+  else if (c.pais && norm(c.pais.valor) && !norm(c.pais.valor).includes(dest)) cob = 'Fuera del pais de destino (sin envio declarado)';
   else cob = 'No verificable';
   c.cal = {
     identidad: pts >= 4 ? 'Alto' : pts >= 2 ? 'Medio' : pts >= 1 ? 'Bajo' : 'No verificable',
     tipo: tv === 'fabricante' ? 'Fabricante' : (tv === 'distribuidor' || tv === 'comercializador') ? 'Distribuidor' : 'No determinado',
     certificaciones: certCal,
     cobertura: cob,
-    precio: c.precio ? 'Referencia disponible' : 'No encontrado',
-    reputacion: c.menciones.length >= 3 ? 'Alto' : c.menciones.length >= 1 ? 'Medio' : 'No verificable',
+    precio: !c.precio ? 'No encontrado' : precioDetalEnMayor(c) ? 'Solo al detal (no comparable con compra mayorista)' : precioSinUnidad(c) ? 'Sin unidad indicada (no comparable)' : 'Referencia disponible',
   };
   c.ord = {
     identidad: ORD[c.cal.identidad],
     tipo: { Fabricante: 3, Distribuidor: 2, 'No determinado': 1 }[c.cal.tipo],
     certificaciones: certCal === 'No exigidas' ? 2 : (ORD[certCal] ?? 0),
-    cobertura: { Local: 3, 'Envia al exterior (declarado)': 2, 'No verificable': 1, 'No evaluada': 1 }[cob],
-    precio: !c.precio ? 0 : (c.precio_comparable ? Math.max(1, 3 - c.precio_rango) : 2),
+    cobertura: { Local: 3, 'Envia al exterior (declarado)': 2, 'No verificable': 1, 'No evaluada': 1, 'Fuera del pais de destino (sin envio declarado)': 0 }[cob],
+    precio: (!c.precio || precioNoComparable(c)) ? 0 : (c.precio_comparable ? Math.max(1, 3 - c.precio_rango) : 2),
   };
   if (c.ofrece && c.ofrece.valor === false) c.veredicto = 'Descartado: no ofrece el producto';
   else if (req.length && certCal === 'No verificable') c.veredicto = 'Condicionado: validar certificaciones';
@@ -135,8 +159,9 @@ for (const c of candidatos) {
 // ---------- 4. Ranking explicable (prioridad segun Kraljic) ----------
 const kr = norm(plan.kraljic?.cuadrante || '');
 const riesgoPrimero = /estrateg|cuello/.test(kr);
-const ORDEN_PRECIO = ['precio', 'tipo', 'identidad', 'certificaciones', 'cobertura'];
-const ORDEN_RIESGO = ['identidad', 'certificaciones', 'tipo', 'cobertura', 'precio'];
+// La cobertura va antes que el tipo: un fabricante que no puede entregar en el destino no es una opcion real
+const ORDEN_PRECIO = ['precio', 'cobertura', 'tipo', 'identidad', 'certificaciones'];
+const ORDEN_RIESGO = ['identidad', 'certificaciones', 'cobertura', 'tipo', 'precio'];
 const rangoVeredicto = (c) => (c.veredicto.startsWith('Preseleccionado') ? 0 : c.veredicto.startsWith('Condicionado') ? 1 : 2);
 const ordenar = (orden) => [...candidatos].sort((a, b) => {
   if (rangoVeredicto(a) !== rangoVeredicto(b)) return rangoVeredicto(a) - rangoVeredicto(b);
@@ -146,7 +171,7 @@ const ordenar = (orden) => [...candidatos].sort((a, b) => {
 const ranking = ordenar(riesgoPrimero ? ORDEN_RIESGO : ORDEN_PRECIO);
 const topPrecio = ordenar(ORDEN_PRECIO)[0];
 const topRiesgo = ordenar(ORDEN_RIESGO)[0];
-const nombreDe = (c) => c?.empresa?.valor || c?.titulo?.split(/[|\-:]/)[0].trim() || c?.dominio || 'sin proveedor';
+const nombreDe = (c) => c?.nombre || c?.dominio || 'sin proveedor';
 const sensibilidad = !topPrecio ? 'Sin proveedores finalistas para comparar.'
   : (topPrecio.dominio === topRiesgo.dominio
     ? `Gana ${nombreDe(topPrecio)} tanto si se prioriza el precio como si se prioriza el riesgo y la continuidad.`
@@ -159,7 +184,10 @@ if (candidatos.length >= 2 && paisesCand.size === 1) riesgos.push('Todos los fin
 if (candidatos.length < 3) riesgos.push('Hay menos de 3 finalistas verificables: poca competencia para negociar y poco respaldo si uno falla.');
 if (candidatos.every((c) => !c.precio)) riesgos.push('Ningun finalista publica precio verificable: el costo total no se puede estimar y debe pedirse por RFQ.');
 if (!candidatos.some((c) => c.cal.tipo === 'Fabricante')) riesgos.push('Ningun finalista pudo verificarse como fabricante directo: pueden ser intermediarios.');
-candidatos.filter((c) => c.alertas.length).forEach((c) => riesgos.push(`Alertas de reputacion para ${nombreDe(c)}: revisar las fuentes citadas.`));
+candidatos.filter((c) => c.alertas.length).forEach((c) => riesgos.push(`Posibles alertas de reputacion para ${nombreDe(c)}: revisar las fuentes citadas y confirmar que se trata de la misma empresa y no de una homonima.`));
+candidatos.filter(precioDetalEnMayor).forEach((c) => riesgos.push(`El precio publicado por ${nombreDe(c)} es al detal: no sirve como referencia para una compra al por mayor.`));
+candidatos.filter((c) => !precioDetalEnMayor(c) && precioSinUnidad(c)).forEach((c) => riesgos.push(`El precio publicado por ${nombreDe(c)} no indica unidad (por kilo, bulto o tonelada): no se puede comparar.`));
+if (dest && candidatos.length && candidatos.every((c) => c.cal.cobertura !== 'Local')) riesgos.push('Ningun finalista pudo verificarse como presente en el pais de destino: revisar costos y plazos de importacion o repetir la busqueda en modo profunda.');
 const motoresActivos = Object.entries(leer.motores_busqueda).filter(([, x]) => x.resultados > 0).length;
 if (motoresActivos <= 1) riesgos.push(`La busqueda dependio de ${motoresActivos === 1 ? 'un solo buscador' : 'ningun buscador'}: la cobertura es menor a la esperada, conviene repetirla mas tarde.`);
 if (leer.consultas_ejecutadas && (leer.consultas_sin_resultados || 0) / leer.consultas_ejecutadas > 0.3) riesgos.push('Mas del 30% de las consultas no devolvio resultados (posible limite de los buscadores): la cobertura puede ser incompleta.');
@@ -169,12 +197,12 @@ const rankingCompacto = ranking.map((c, i) => ({
   posicion: i + 1, proveedor: nombreDe(c), url: c.url, veredicto: c.veredicto, calificaciones: c.cal,
   datos_verificados: {
     tipo: c.tipo?.valor || null, productos: c.productos?.valor || null, pais: c.pais?.valor || null, ciudad: c.ciudad?.valor || null,
-    certificaciones: certsDe(c), precio: c.precio ? { valor: c.precio.valor, moneda: c.precio.moneda, unidad: c.precio.unidad, condicion: c.precio.condicion } : null,
+    certificaciones: certsDe(c), precio: c.precio ? { valor: c.precio.valor, moneda: c.precio.moneda, unidad: c.precio.unidad, condicion: c.precio.condicion, comparable: !precioNoComparable(c) } : null,
     moq: c.moq?.valor || null, incoterm: c.incoterm?.valor || null, plazo_entrega: c.plazo?.valor || null, anios_operacion: c.anios?.valor || null,
     capacidad: c.capacidad?.valor || null, envio_internacional: c.envio?.valor ?? null, correos_encontrados: c.emails.length, telefonos_encontrados: c.telefonos.length,
   },
   menciones_en_fuentes_independientes: c.menciones.length,
-  alertas_de_reputacion: c.alertas.length,
+  posibles_alertas_por_verificar: c.alertas.length,
   campos_descartados_por_no_verificables: c.descartados.length,
 }));
 const entradaNarrativa = {

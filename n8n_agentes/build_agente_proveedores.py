@@ -22,7 +22,7 @@ if "--prueba" in sys.argv:
 
 MOCK = sys.argv[sys.argv.index("--mock") + 1] if "--mock" in sys.argv else None  # solo para pruebas, ver busqueda_js/mock_claude.js
 
-ANTHROPIC_CREDENTIAL = {"id": "CcTGzJyAkcsKjXNE", "name": "Anthropic account"}
+ANTHROPIC_CREDENTIAL = {"id": "TinZ1eTTiTSbGGTS", "name": "Anthropic account"}
 
 
 def codigo(archivo):

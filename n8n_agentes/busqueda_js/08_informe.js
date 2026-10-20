@@ -12,13 +12,29 @@ const tokOut = llamadas.reduce((s, x) => s + (x.salida || 0), 0);
 const costo = (tokIn * PRECIO_MTOK.entrada + tokOut * PRECIO_MTOK.salida) / 1e6;
 
 const NE = 'NO ENCONTRADO';
-const nombreDe = (c) => c?.empresa?.valor || c?.titulo?.split(/[|\-:]/)[0].trim() || c?.dominio;
+const nombreDe = (c) => c?.nombre || c?.dominio;
 const celda = (t) => String(t ?? '').replace(/\|/g, '/').replace(/\n/g, ' ');
 const lista = (arr) => (arr && arr.length ? arr.join(', ') : NE);
-const precioTxt = (c) => (c.precio ? `${c.precio.valor} ${c.precio.moneda || ''}/${c.precio.unidad || ''}${c.precio.condicion && c.precio.condicion !== 'no_indica' ? ' (' + c.precio.condicion + ')' : ''}` : NE);
+const sinUnidad = (c) => !c.precio.unidad || ['no_indica', 'null', 'n/a'].includes(String(c.precio.unidad).toLowerCase());
+const precioTxt = (c) => (c.precio ? `${c.precio.valor} ${c.precio.moneda || ''}${sinUnidad(c) ? ' (sin unidad indicada)' : '/' + c.precio.unidad}${c.precio.condicion && c.precio.condicion !== 'no_indica' ? ' (' + c.precio.condicion + ')' : ''}` : NE);
 
 // ---------- Narrativa (con limpieza) ----------
 let narr = sinGuiones(textoNarr).trim();
+// Control de cifras: una frase con dinero cuyas cifras no estan en los datos verificados se elimina (el modelo puede convertir
+// monedas o inventar rangos de precio, y eso no se puede comprobar).
+const digitos = (t) => (String(t).match(/\d[\d.,]*/g) || []).map((n) => n.replace(/\D/g, '')).filter(Boolean);
+const cifrasConocidas = new Set(digitos(v.claude_body?.messages?.[0]?.content ?? ''));
+let frasesEliminadas = 0;
+narr = narr.split('\n').map((linea) => {
+  if (/^\s*#/.test(linea)) return linea;
+  return linea.split(/(?<=[.!?])\s+/).filter((frase) => {
+    if (!/usd|eur\b|\bcop\b|us\$|\$|€|d[oó]lar|euro|pesos/i.test(frase)) return true;
+    const desconocidas = digitos(frase).filter((d) => !cifrasConocidas.has(d));
+    if (desconocidas.length) { frasesEliminadas++; return false; }
+    return true;
+  }).join(' ');
+}).join('\n');
+if (frasesEliminadas) narr += '\n\n> Nota del sistema: se eliminaron ' + frasesEliminadas + ' frase(s) de esta narrativa por contener cifras de dinero que no estaban en los datos verificados.';
 const urlsPermitidas = new Set([...cands.map((c) => c.url), ...(v.paginas || []).map((g) => g.url)]);
 narr = narr.replace(/https?:\/\/[^\s)\]>"']+/g, (u) => (urlsPermitidas.has(u) ? u : '[enlace no verificado, eliminado]'));
 if (!narr || v.sin_finalistas) {
@@ -59,6 +75,8 @@ if (cands.length) {
   L.push('');
   L.push(`Sensibilidad del ranking: ${v.sensibilidad}`);
   L.push('');
+  L.push('Nota sobre certificaciones: una calificacion "Alto" significa que el sitio del propio proveedor menciona los registros requeridos. No se consulto el registro oficial (por ejemplo INVIMA o RUES), asi que debe confirmarse con el certificado vigente antes de comprar.');
+  L.push('');
   L.push('## Ficha por proveedor');
   cands.forEach((c, i) => {
     L.push(`### ${i + 1}. ${nombreDe(c)}`);
@@ -73,7 +91,7 @@ if (cands.length) {
     L.push(`- Minimo de pedido: ${c.moq ? c.moq.valor : NE} | Incoterm: ${c.incoterm ? c.incoterm.valor : NE} | Plazo de entrega: ${c.plazo ? c.plazo.valor : NE}`);
     L.push(`- Antiguedad: ${c.anios ? c.anios.valor : NE} | Capacidad: ${c.capacidad ? c.capacidad.valor : NE} | Envio internacional: ${c.envio ? (c.envio.valor ? 'si (declarado)' : 'no (declarado)') : NE}`);
     L.push(`- Menciones en fuentes independientes: ${c.menciones.length}${c.menciones.length ? ' (' + c.menciones.slice(0, 5).join(', ') + ')' : ''}`);
-    L.push(`- Alertas de reputacion: ${c.alertas.length ? c.alertas.map((a) => `${a.titulo} (${a.url})`).join('; ') : 'ninguna encontrada en las fuentes revisadas'}`);
+    L.push(`- Posibles alertas de reputacion (verificar que sean la misma empresa y no una homonima): ${c.alertas.length ? c.alertas.map((a) => `${a.titulo} (${a.url})`).join('; ') : 'ninguna encontrada en las fuentes revisadas'}`);
     if (c.descartados.length) L.push(`- Datos descartados por no poder verificarse: ${c.descartados.map((d) => `${d.campo} (${d.motivo})`).join(', ')}`);
     L.push('');
   });

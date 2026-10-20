@@ -176,7 +176,7 @@ const html = `<!DOCTYPE html>
 return [{ json: { html } }];
 """
 
-ANTHROPIC_CREDENTIAL = {"id": "CcTGzJyAkcsKjXNE", "name": "Anthropic account"}
+ANTHROPIC_CREDENTIAL = {"id": "TinZ1eTTiTSbGGTS", "name": "Anthropic account"}
 
 workflow = {
     "name": "Agente Gestor de Inventarios",
