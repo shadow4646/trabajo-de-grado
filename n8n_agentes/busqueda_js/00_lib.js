@@ -57,21 +57,31 @@ const resolverUrl = (href, base) => {
 };
 const conOSinWww = (url) => String(url).replace(/^(https?:\/\/)(www\.)?/i, (m, a, w) => a + (w ? '' : 'www.'));
 // Defensa contra SSRF: las URLs que se descargan salen de buscadores y de paginas ajenas, asi que no son de fiar.
-// Devuelve el motivo del veto, o null si la URL es publica y aceptable. El entorno de n8n no permite resolver DNS,
-// por eso un nombre publico que apunte a una IP privada no se detecta aqui (ver README, seccion Seguridad).
+// Es una lista blanca estricta: ante cualquier forma que el parser del cliente HTTP (WHATWG) pudiera leer distinto a
+// esta funcion (barra invertida, %, unicode, octal, hexadecimal, usuario@, espacios), la URL se rechaza en vez de
+// interpretarla. Devuelve el motivo del veto, o null si es publica y aceptable. El entorno de n8n no permite resolver
+// DNS, por eso un nombre publico que apunte a una IP privada no se detecta aqui (ver README, seccion Seguridad).
+const IPV4_ESTRICTA = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 function urlInsegura(u) {
-  const m = String(u || '').match(/^(https?):\/\/(?:[^@\/?#]*@)?([^\/?#:]+|\[[^\]]*\])(?::(\d+))?(?:[\/?#]|$)/i);
+  const s = String(u ?? '');
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c <= 32 || c === 92 || (c >= 127 && c <= 159)) return 'caracteres_no_permitidos';
+  }
+  const m = s.match(/^https?:\/\/([^\/?#]*)/i);
   if (!m) return 'esquema_o_formato_no_permitido';
-  const host = m[2].toLowerCase().replace(/\.$/, '');
-  const puerto = m[3] ? Number(m[3]) : null;
-  if (puerto !== null && ![80, 443, 8080, 8443].includes(puerto)) return 'puerto_no_permitido';
-  if (host.startsWith('[')) return 'ip_literal_ipv6';
+  const autoridad = m[1].toLowerCase();
+  if (autoridad.includes('@')) return 'credenciales_en_la_url';
+  const h = autoridad.match(/^([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.?(?::(\d{1,5}))?$/);
+  if (!h) return 'host_no_permitido';
+  const host = h[1];
+  if (h[2] !== undefined && ![80, 443, 8080, 8443].includes(Number(h[2]))) return 'puerto_no_permitido';
   if (host === 'localhost' || /\.(localhost|local|internal|lan|home|corp|intranet|localdomain)$/.test(host)) return 'nombre_interno';
   if (!host.includes('.')) return 'nombre_sin_dominio';
-  if (/^0x/i.test(host) || /^[\d.]+$/.test(host)) {
-    const p = host.split('.').map(Number);
-    if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return 'ip_en_formato_raro';
-    const [a, b] = p;
+  // Si la ultima etiqueta es numerica o hexadecimal, el parser lo trata como direccion IPv4: solo se acepta decimal estricto.
+  if (/^(0x[0-9a-f]*|\d+)$/.test(host.split('.').pop())) {
+    if (!IPV4_ESTRICTA.test(host)) return 'ip_en_formato_raro';
+    const [a, b] = host.split('.').map(Number);
     if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return 'ip_privada_o_reservada';
   }
   return null;
