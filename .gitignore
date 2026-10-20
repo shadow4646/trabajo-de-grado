@@ -19,6 +19,7 @@ n8n_agentes/searxng/settings.yml
 
 # Informes generados localmente por los workflows
 n8n_agentes/informes/
+n8n_agentes/busqueda_js/_prueba_informe.md
 
 # Configuracion local de Claude Code
 .claude/settings.local.json

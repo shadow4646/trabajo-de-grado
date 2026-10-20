@@ -8,6 +8,7 @@ Proyecto de grado de Ingeniería Industrial. Este repositorio contiene solo el c
 |---|---|
 | `n8n_agentes/build_agente_inventarios.py` | Genera el workflow "Agente Gestor de Inventarios" (rotación, punto de reorden, clasificación ABC, informe mensual). |
 | `n8n_agentes/build_agente_proveedores.py` | Genera el workflow "Agente Cotizador de Proveedores" (búsqueda y comparación de proveedores). |
+| `n8n_agentes/busqueda_js/` | Código de los nodos del agente de proveedores (búsqueda rápida y profunda). `00_lib.js` es la biblioteca común, `01` a `09` son los nodos, `test_local.js` los prueba sin n8n y `mock_claude.js` simula la API de Claude para probar sin gastar. |
 | `n8n_agentes/*.json` | Workflows ya generados, listos para importar en n8n. |
 | `n8n_agentes/inventario_historico.csv` | CSV de ejemplo para probar el agente de inventarios. |
 | `n8n_agentes/searxng/` | Plantilla de configuración del buscador local SearXNG. |
@@ -31,6 +32,15 @@ docker run -d --name searxng --restart unless-stopped -p 127.0.0.1:8888:8080 -v 
 ```
 
 Consulta de prueba: `http://127.0.0.1:8888/search?q=harina+de+trigo&format=json`
+
+## Probar la búsqueda de proveedores sin gastar
+
+```
+cd n8n_agentes/busqueda_js
+node test_local.js "rapida: harina de trigo panadera, 5 toneladas por pedido, destino Bogota"
+```
+
+Usa SearXNG y páginas reales, pero respuestas de Claude simuladas. La prueba real con Claude gasta unos centavos de dólar por informe (modelo Haiku 4.5, estimación propia sin verificar).
 
 ## Seguridad
 

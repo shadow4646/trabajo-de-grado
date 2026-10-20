@@ -8,9 +8,39 @@ search:
   formats:
     - html
     - json
+  suspended_times:
+    SearxEngineAccessDenied: 600
+    SearxEngineCaptcha: 600
+    SearxEngineTooManyRequests: 600
+    cf_SearxEngineCaptcha: 600
+    cf_SearxEngineAccessDenied: 600
+    recaptcha_SearxEngineCaptcha: 600
 server:
   secret_key: "CAMBIAR_POR_UNA_CLAVE_ALEATORIA"
   limiter: false
   image_proxy: false
 ui:
   static_use_hash: true
+engines:
+  # Respaldo: mas buscadores para no depender de uno solo
+  - name: bing
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: yep
+    disabled: false
+  - name: qwant
+    disabled: false
+  # Ruido que solo agrega timeouts para esta tarea
+  - name: wikidata
+    disabled: true
+  - name: wikipedia
+    disabled: true
+  - name: currency
+    disabled: true
+  - name: dictzone
+    disabled: true
+  - name: lingva
+    disabled: true
+  - name: mymemory translated
+    disabled: true
