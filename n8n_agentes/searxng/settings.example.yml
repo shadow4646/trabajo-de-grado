@@ -1,0 +1,16 @@
+# Plantilla de configuracion de SearXNG. Copiar como settings.yml (que esta en .gitignore)
+# y cambiar secret_key por una cadena aleatoria, por ejemplo: python -c "import secrets; print(secrets.token_hex(32))"
+use_default_settings: true
+general:
+  instance_name: "Busqueda local del proyecto"
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+server:
+  secret_key: "CAMBIAR_POR_UNA_CLAVE_ALEATORIA"
+  limiter: false
+  image_proxy: false
+ui:
+  static_use_hash: true

@@ -1,0 +1,24 @@
+# Entregas y documentacion academica: NO se suben (solo codigo y agentes)
+*.docx
+*.pdf
+/generate_*.py
+/CLAUDE.md
+
+# Archivos temporales de Word (aparecen mientras un .docx esta abierto)
+~$*
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+
+# Claves y configuracion local: nunca subir
+.env
+*.env
+n8n_agentes/searxng/settings.yml
+
+# Informes generados localmente por los workflows
+n8n_agentes/informes/
+
+# Configuracion local de Claude Code
+.claude/settings.local.json

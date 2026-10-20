@@ -1,0 +1,25 @@
+producto,fecha,cantidad_consumida,stock_actual,costo_unitario,lead_time_dias
+Tornillo M6x20,2026-04,1200,900,0.08,15
+Tornillo M6x20,2026-05,1350,900,0.08,15
+Tornillo M6x20,2026-06,1100,900,0.08,15
+Tornillo M6x20,2026-07,1400,900,0.08,15
+Tornillo M6x20,2026-08,1500,900,0.08,15
+Tornillo M6x20,2026-09,1600,900,0.08,15
+Lamina Acero 2mm,2026-04,40,35,22.50,30
+Lamina Acero 2mm,2026-05,38,35,22.50,30
+Lamina Acero 2mm,2026-06,45,35,22.50,30
+Lamina Acero 2mm,2026-07,42,35,22.50,30
+Lamina Acero 2mm,2026-08,50,35,22.50,30
+Lamina Acero 2mm,2026-09,48,35,22.50,30
+Empaque de Caucho,2026-04,0,120,1.20,10
+Empaque de Caucho,2026-05,0,120,1.20,10
+Empaque de Caucho,2026-06,0,120,1.20,10
+Empaque de Caucho,2026-07,0,120,1.20,10
+Empaque de Caucho,2026-08,0,120,1.20,10
+Empaque de Caucho,2026-09,0,120,1.20,10
+Motor Electrico 1HP,2026-04,3,2,180.00,45
+Motor Electrico 1HP,2026-05,4,2,180.00,45
+Motor Electrico 1HP,2026-06,2,2,180.00,45
+Motor Electrico 1HP,2026-07,5,2,180.00,45
+Motor Electrico 1HP,2026-08,3,2,180.00,45
+Motor Electrico 1HP,2026-09,6,2,180.00,45

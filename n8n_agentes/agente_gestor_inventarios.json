@@ -1,0 +1,358 @@
+{
+  "name": "Agente Gestor de Inventarios",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule-mensual",
+      "name": "Disparador Mensual",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "chat-trigger-test",
+      "name": "Chat de Prueba",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        64
+      ],
+      "webhookId": "gestor-inventarios-chat-test"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "C:\\Users\\monca\\.n8n-files\\inventario_historico.csv",
+        "options": {}
+      },
+      "id": "leer-csv",
+      "name": "Leer Historial CSV",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        512,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "fromCsv",
+        "options": {}
+      },
+      "id": "extraer-csv",
+      "name": "Extraer Datos CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        736,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(item => item.json);\nconst porProducto = {};\nfor (const r of rows) {\n  const key = r.producto;\n  if (!porProducto[key]) porProducto[key] = [];\n  porProducto[key].push(r);\n}\n\nfunction mean(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }\nfunction std(arr) {\n  if (arr.length < 2) return 0;\n  const m = mean(arr);\n  const variance = arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);\n  return Math.sqrt(variance);\n}\n\nconst Z_95 = 1.645;\nconst resultados = [];\n\nfor (const producto in porProducto) {\n  const historial = porProducto[producto].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));\n  const consumos = historial.map(h => Number(h.cantidad_consumida));\n  const mesesHistoria = consumos.length;\n  const consumoPromedio = mean(consumos);\n  const desviacion = mesesHistoria >= 3 ? std(consumos) : 0;\n  const ultimo = historial[historial.length - 1];\n  const stockActual = Number(ultimo.stock_actual);\n  const costoUnitario = Number(ultimo.costo_unitario);\n  const leadTimeDias = Number(ultimo.lead_time_dias || 30);\n  const leadTimeMeses = leadTimeDias / 30;\n\n  const stockSeguridad = Z_95 * desviacion * Math.sqrt(leadTimeMeses);\n  const puntoReorden = (consumoPromedio * leadTimeMeses) + stockSeguridad;\n  const debeComprar = stockActual <= puntoReorden;\n  const cantidadSugerida = debeComprar\n    ? Math.max(0, Math.round((puntoReorden + consumoPromedio) - stockActual))\n    : 0;\n\n  const consumoAnualEstimado = consumoPromedio * 12;\n  const rotacion = stockActual > 0 ? (consumoAnualEstimado / stockActual) : null;\n  const valorConsumoAnual = consumoAnualEstimado * costoUnitario;\n\n  let mesesSinMovimiento = 0;\n  for (let i = historial.length - 1; i >= 0; i--) {\n    if (Number(historial[i].cantidad_consumida) === 0) mesesSinMovimiento++;\n    else break;\n  }\n\n  resultados.push({\n    producto,\n    meses_historia: mesesHistoria,\n    consumo_promedio_mensual: Math.round(consumoPromedio * 100) / 100,\n    desviacion_consumo: Math.round(desviacion * 100) / 100,\n    stock_actual: stockActual,\n    lead_time_dias: leadTimeDias,\n    punto_reorden: Math.round(puntoReorden),\n    stock_seguridad: Math.round(stockSeguridad),\n    accion_recomendada: debeComprar ? 'COMPRAR (stock en o bajo el punto de reorden)' : 'NO COMPRAR AHORA (stock sobre el punto de reorden)',\n    cantidad_sugerida_compra: cantidadSugerida,\n    rotacion_anual_estimada: rotacion !== null ? Math.round(rotacion * 100) / 100 : null,\n    valor_consumo_anual: Math.round(valorConsumoAnual),\n    meses_consecutivos_sin_movimiento: mesesSinMovimiento,\n  });\n}\n\nresultados.sort((a, b) => b.valor_consumo_anual - a.valor_consumo_anual);\nconst totalValor = resultados.reduce((s, r) => s + r.valor_consumo_anual, 0);\nlet acumuladoPrevio = 0;\nfor (const r of resultados) {\n  const pctPrevio = totalValor > 0 ? (acumuladoPrevio / totalValor) * 100 : 0;\n  r.clase_abc = pctPrevio < 80 ? 'A' : (pctPrevio < 95 ? 'B' : 'C');\n  acumuladoPrevio += r.valor_consumo_anual;\n}\n\nreturn [{ json: { fecha_analisis: $now.toFormat('yyyy-MM'), productos: resultados } }];\n"
+      },
+      "id": "calcular-rotacion",
+      "name": "Calcular Rotacion y Recomendaciones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Fecha actual: {{ $now.toFormat('yyyy-MM-dd') }}\n\nAnaliza estos datos de inventario y genera el informe mensual:\n\n{{ JSON.stringify($json) }}",
+        "options": {
+          "systemMessage": "Eres un gerente de inventarios experto, con el nivel de un profesional certificado en gestion de cadena de suministro (APICS/ASCM). Tu trabajo es analizar el historial de consumo mensual de los productos de una empresa (de cualquier tamano, desde una PYME hasta una gran empresa) y redactar un informe mensual de rotacion de inventario con recomendaciones de compra que eviten tanto el sobrestock como el quiebre de stock.\n\nDATOS QUE RECIBES\nRecibiras, por cada producto, datos ya precalculados: meses de historial, consumo promedio mensual, desviacion del consumo, stock actual, lead time en dias, punto de reorden, stock de seguridad, accion recomendada (COMPRAR o NO COMPRAR AHORA, que depende de si el stock esta en o bajo el punto de reorden), cantidad sugerida de compra, rotacion anual estimada, valor de consumo anual, clase ABC, y meses consecutivos sin movimiento. No inventes ni recalcules estos numeros: tu trabajo es interpretarlos con criterio profesional y redactar las recomendaciones finales en lenguaje claro. La fecha actual y el periodo analizado te llegan en el mensaje del usuario: usalos tal cual y nunca inventes una fecha.\n\nLIMITES DE LOS CALCULOS QUE DEBES DECLARAR EN EL INFORME: el pronostico es un promedio simple de los meses disponibles, el stock de seguridad usa un nivel de servicio unico del 95% y no modela variabilidad del lead time ni ordenes en transito, y la clasificacion ABC con pocos productos es solo orientativa. Mencionalo en una linea al final del informe.\n\nCRITERIOS QUE DEBES APLICAR AL INTERPRETAR Y RECOMENDAR\n\n1. Clasificacion ABC: los productos clase A (mayor valor de consumo acumulado) necesitan seguimiento mas cercano y menor margen de error en la recomendacion; los de clase C toleran reglas mas simples y un stock de seguridad mas generoso sin que eso sea un problema.\n\n2. Rotacion de inventario: compara la rotacion anual estimada de cada producto contra rangos tipicos orientativos (alimentos o insumos de alta rotacion: 10-18+ veces al ano; manufactura general: 4-8; distribucion o bienes de bajo movimiento: 2-6). Si la rotacion esta muy por debajo de lo esperable para ese tipo de producto, es senal de sobrestock: recomienda reducir o incluso pausar la proxima compra. Si esta muy por encima, no lo celebres automaticamente, podria indicar quiebres de stock frecuentes.\n\n3. Punto de reorden y stock de seguridad: si el stock actual ya esta por debajo del punto de reorden, marca el producto como prioritario para compra inmediata. Explica siempre el trade-off entre stock de seguridad (menor riesgo de quiebre, mas capital inmovilizado) en terminos simples cuando sea relevante para la decision.\n\n4. Confianza del dato: con menos de 6 meses de historial, aclara explicitamente que el pronostico es preliminar y tiene menor confiabilidad. Con 12 o mas meses, puedes hablar con mas seguridad de patrones y tendencias.\n\n5. Demanda intermitente: si un producto tiene varios meses consecutivos en cero consumo, no lo trates como un producto de rotacion normal; senala que su patron es esporadico y que la cantidad sugerida calculada con formulas estandar puede no ser confiable para el.\n\n6. Stock muerto: si un producto lleva 3 o mas meses consecutivos sin ningun consumo y mantiene stock, senalalo explicitamente como candidato a liquidar o descontinuar, independientemente de su clase ABC.\n\n7. Ajusta el nivel de detalle a lo que la empresa necesita: si hay pocos productos, se directo y conciso; si hay muchos, organiza el informe por clase ABC para que el lector priorice.\n\nFORMATO DE INFORME OBLIGATORIO (sin emojis, sin simbolos decorativos)\n\nINFORME DE ROTACION DE INVENTARIO\nPeriodo analizado: [periodo recibido en los datos]\nFecha de generacion: [fecha actual recibida en el mensaje]\n\nRESUMEN EJECUTIVO\n[2 a 4 frases con el estado general del inventario y las alertas mas importantes del mes]\n\nPRODUCTOS CLASE A (alto valor, seguimiento prioritario)\n[para cada producto: nombre, rotacion anual estimada, stock actual, punto de reorden, cantidad sugerida de compra, justificacion breve de 1-2 lineas]\n\nPRODUCTOS CLASE B\n[mismo formato, puede ser mas breve]\n\nPRODUCTOS CLASE C\n[mismo formato, puede ser mas breve]\n\nALERTAS\nRiesgo de quiebre de stock: [productos con stock por debajo del punto de reorden]\nRiesgo de sobrestock: [productos con rotacion muy por debajo de lo esperable]\nPosible stock muerto: [productos con 3+ meses sin movimiento]\n\nRECOMENDACION GENERAL DEL MES\n[resumen ejecutivo de 3 a 5 lineas con las compras prioritarias del mes y el motivo principal]\n"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "id": "agente-inventarios",
+      "name": "Agente IA Gestor de Inventarios",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6",
+          "cachedResultName": "Claude Sonnet 4.6"
+        },
+        "options": {}
+      },
+      "id": "llm-inventarios",
+      "name": "Claude (Gestor Inventarios)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1184,
+        128
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "CcTGzJyAkcsKjXNE",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Fecha actual: {{ $now.toFormat('yyyy-MM-dd') }}\n\nDATOS CALCULADOS QUE SUSTENTAN EL INFORME:\n{{ JSON.stringify($('Calcular Rotacion y Recomendaciones').first().json) }}\n\nINFORME A REVISAR:\n{{ $json.output }}",
+        "options": {
+          "systemMessage": "Eres un auditor de calidad para recomendaciones de inventario generadas por otro agente de IA. Revisa el informe generado y los datos que lo sustentan, aplicando los mismos criterios profesionales de gestion de inventarios: clasificacion ABC, rotacion esperada segun el tipo de producto, coherencia entre stock actual, punto de reorden y cantidad sugerida de compra, deteccion correcta de demanda intermitente y de posible stock muerto.\n\nSe critico, no un aprobador automatico. Si algo no cuadra (por ejemplo, una cantidad sugerida de compra alta para un producto de rotacion muy baja, o un producto con varios meses sin consumo al que se le sugiere comprar mas sin justificacion), senalalo explicitamente con el motivo.\n\nFormato de salida obligatorio (sin emojis, sin simbolos decorativos):\n\nREVISION DE CALIDAD (Agente Revisor)\nFecha: [fecha actual recibida en el mensaje]\nVeredicto: [APROBADO / APROBADO CON OBSERVACIONES / REQUIERE REVISION]\nObservaciones: [lista breve y concreta; si no hay ninguna, escribe \"Sin observaciones, el informe es coherente con los datos y los criterios de gestion de inventarios.\"]\n\nVerifica ademas que el informe respete la accion recomendada de los datos (si un producto dice NO COMPRAR AHORA, el informe no debe sugerirle compra) y que las cifras del informe coincidan con los datos calculados.\n"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "id": "agente-revisor-inventarios",
+      "name": "Agente Revisor Inventarios",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6",
+          "cachedResultName": "Claude Sonnet 4.6"
+        },
+        "options": {}
+      },
+      "id": "llm-revisor-inventarios",
+      "name": "Claude (Revisor Inventarios)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1408,
+        128
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "CcTGzJyAkcsKjXNE",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('Agente IA Gestor de Inventarios').first().json.output;\nconst revision = $json.output;\nconst noAprobado = /REQUIERE REVISION/i.test(revision);\nconst aviso = noAprobado\n  ? 'ADVERTENCIA: el revisor automatico marco este informe como REQUIERE REVISION. No usarlo para decidir compras sin verificarlo.\\n\\n'\n  : '';\nreturn [{ json: { output: aviso + original + '\\n\\n========================================\\n' + revision } }];\n"
+      },
+      "id": "combinar-informe-revision",
+      "name": "Combinar Informe y Revision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = String($input.first().json.output);\nconst text = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst html = `<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<style>\n  body { font-family: Arial, sans-serif; margin: 40px; color: #222; }\n  h1 { font-size: 22px; border-bottom: 2px solid #333; padding-bottom: 8px; }\n  h2 { font-size: 16px; margin-top: 24px; color: #444; }\n  pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 13px; line-height: 1.6; }\n</style>\n</head>\n<body>\n<pre>${text}</pre>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];\n"
+      },
+      "id": "html-wrap",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pdfshift.io/v3/convert/pdf",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "source",
+              "value": "={{ $json.html }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "id": "pdfshift-request",
+      "name": "Generar PDF del Informe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2080,
+        -48
+      ]
+    }
+  ],
+  "connections": {
+    "Disparador Mensual": {
+      "main": [
+        [
+          {
+            "node": "Leer Historial CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat de Prueba": {
+      "main": [
+        [
+          {
+            "node": "Leer Historial CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Historial CSV": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos CSV": {
+      "main": [
+        [
+          {
+            "node": "Calcular Rotacion y Recomendaciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Rotacion y Recomendaciones": {
+      "main": [
+        [
+          {
+            "node": "Agente IA Gestor de Inventarios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude (Gestor Inventarios)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente IA Gestor de Inventarios",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente IA Gestor de Inventarios": {
+      "main": [
+        [
+          {
+            "node": "Agente Revisor Inventarios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude (Revisor Inventarios)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente Revisor Inventarios",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente Revisor Inventarios": {
+      "main": [
+        [
+          {
+            "node": "Combinar Informe y Revision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combinar Informe y Revision": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Generar PDF del Informe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  },
+  "active": false,
+  "id": "Be8j3flihDvE2tMl"
+}
