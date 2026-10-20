@@ -144,7 +144,7 @@ L.push('| Familia de consultas | Consultas | Resultados | Dominios nuevos |');
 L.push('|---|---|---|---|');
 Object.entries(porFam).forEach(([f, x]) => L.push(`| ${f} | ${x.consultas} | ${x.resultados} | ${x.nuevos} |`));
 L.push('');
-L.push(`- Paginas leidas: ${el.intentadas || 0} intentadas, ${el.ok || 0} con texto util, ${el.bloqueadas || 0} bloqueadas por el sitio, ${el.vacias_js || 0} vacias o que requieren JavaScript, ${el.errores || 0} con error de red o HTTP.`);
+L.push(`- Paginas leidas: ${el.intentadas || 0} intentadas, ${el.ok || 0} con texto util, ${el.bloqueadas || 0} bloqueadas por el sitio, ${el.vacias_js || 0} vacias o que requieren JavaScript, ${el.errores || 0} con error de red o HTTP${el.bloqueadas_seguridad ? `, ${el.bloqueadas_seguridad} descartadas por seguridad (direccion interna o no publica)` : ''}.`);
 if (Object.keys(motivos).length) L.push(`- Motivos de fallo: ${Object.entries(motivos).map(([k, n]) => `${k}: ${n}`).join('; ')}.`);
 L.push(`- Finalistas analizados: ${cands.length}. Paginas de contacto o "acerca de" leidas: ${el.paginas_extra_contacto || 0}. Consultas de reputacion: ${v.consultas_reputacion || 0}.`);
 const vf = v.verificacion || { campos_totales: 0, campos_descartados: 0 };

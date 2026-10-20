@@ -14,7 +14,7 @@ const ctx = {
       const ac = new AbortController();
       const t = setTimeout(() => ac.abort(), o.timeout || 30000);
       try {
-        const r = await fetch(url, { method: o.method || 'GET', headers: o.headers, signal: ac.signal, redirect: 'follow' });
+        const r = await fetch(url, { method: o.method || 'GET', headers: o.headers, signal: ac.signal, redirect: o.disableFollowRedirect ? 'manual' : 'follow' });
         if (!r.ok && !o.ignoreHttpStatusErrors) throw new Error('HTTP ' + r.status);
         const cuerpo = o.json ? await r.json() : await r.text();
         if (o.returnFullResponse) return { body: cuerpo, headers: Object.fromEntries(r.headers.entries()), statusCode: r.status };

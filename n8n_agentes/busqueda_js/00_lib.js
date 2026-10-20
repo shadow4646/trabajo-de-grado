@@ -56,6 +56,26 @@ const resolverUrl = (href, base) => {
   return m[1] + (m[2] || '/').replace(/[^\/]*$/, '') + h;
 };
 const conOSinWww = (url) => String(url).replace(/^(https?:\/\/)(www\.)?/i, (m, a, w) => a + (w ? '' : 'www.'));
+// Defensa contra SSRF: las URLs que se descargan salen de buscadores y de paginas ajenas, asi que no son de fiar.
+// Devuelve el motivo del veto, o null si la URL es publica y aceptable. El entorno de n8n no permite resolver DNS,
+// por eso un nombre publico que apunte a una IP privada no se detecta aqui (ver README, seccion Seguridad).
+function urlInsegura(u) {
+  const m = String(u || '').match(/^(https?):\/\/(?:[^@\/?#]*@)?([^\/?#:]+|\[[^\]]*\])(?::(\d+))?(?:[\/?#]|$)/i);
+  if (!m) return 'esquema_o_formato_no_permitido';
+  const host = m[2].toLowerCase().replace(/\.$/, '');
+  const puerto = m[3] ? Number(m[3]) : null;
+  if (puerto !== null && ![80, 443, 8080, 8443].includes(puerto)) return 'puerto_no_permitido';
+  if (host.startsWith('[')) return 'ip_literal_ipv6';
+  if (host === 'localhost' || /\.(localhost|local|internal|lan|home|corp|intranet|localdomain)$/.test(host)) return 'nombre_interno';
+  if (!host.includes('.')) return 'nombre_sin_dominio';
+  if (/^0x/i.test(host) || /^[\d.]+$/.test(host)) {
+    const p = host.split('.').map(Number);
+    if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return 'ip_en_formato_raro';
+    const [a, b] = p;
+    if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return 'ip_privada_o_reservada';
+  }
+  return null;
+}
 const sleep = (ms) => (typeof setTimeout === 'function' ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
 const trozos = (arr, n) => { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; };
 const sinGuiones = (t) => String(t ?? '').replace(/\s*[\u2014\u2013]\s*/g, ', ');

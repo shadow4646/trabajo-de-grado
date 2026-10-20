@@ -19,18 +19,32 @@ const descargar = async (url) => {
   return r;
 };
 
+// Las redirecciones se siguen a mano (maximo 4) para validar cada destino: un sitio externo no debe poder
+// redirigirnos hacia localhost o la red interna.
 const descargarUna = async (url) => {
-  try {
-    const r = await this.helpers.httpRequest({
-      method: 'GET', url, json: false, timeout: 15000, returnFullResponse: true, ignoreHttpStatusErrors: true,
-      headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'es,en;q=0.8' },
-    });
-    let body = r.body;
-    if (body && typeof body !== 'string') body = (typeof Buffer !== 'undefined' && Buffer.isBuffer(body)) ? body.toString('utf8') : JSON.stringify(body);
-    return { status: r.statusCode, html: String(body ?? '').slice(0, 600000), tipo_contenido: String(r.headers?.['content-type'] ?? '') };
-  } catch (e) {
-    return { status: 0, html: '', error: String(e.message || e).slice(0, 100) };
+  let actual = url;
+  for (let salto = 0; salto <= 4; salto++) {
+    const veto = urlInsegura(actual);
+    if (veto) return { status: 0, html: '', error: 'url_bloqueada: ' + veto };
+    try {
+      const r = await this.helpers.httpRequest({
+        method: 'GET', url: actual, json: false, timeout: 15000, returnFullResponse: true, ignoreHttpStatusErrors: true, disableFollowRedirect: true,
+        headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'es,en;q=0.8' },
+      });
+      const destino = r.headers?.location;
+      if ([301, 302, 303, 307, 308].includes(r.statusCode) && destino) {
+        actual = resolverUrl(String(destino), actual);
+        if (!actual) return { status: 0, html: '', error: 'redireccion_invalida' };
+        continue;
+      }
+      let body = r.body;
+      if (body && typeof body !== 'string') body = (typeof Buffer !== 'undefined' && Buffer.isBuffer(body)) ? body.toString('utf8') : JSON.stringify(body);
+      return { status: r.statusCode, html: String(body ?? '').slice(0, 600000), tipo_contenido: String(r.headers?.['content-type'] ?? '') };
+    } catch (e) {
+      return { status: 0, html: '', error: String(e.message || e).slice(0, 100) };
+    }
   }
+  return { status: 0, html: '', error: 'demasiadas_redirecciones' };
 };
 
 const senales = (texto) => {
@@ -45,6 +59,7 @@ const senales = (texto) => {
 };
 
 const estadoDe = (r, texto) => {
+  if (r.status === 0 && /^url_bloqueada/.test(r.error || '')) return 'bloqueada_por_seguridad';
   if (r.status === 0) return 'error_de_red';
   if ([401, 403, 429].includes(r.status)) return 'bloqueada_por_el_sitio';
   if (r.status >= 400) return 'error_http_' + r.status;
@@ -104,6 +119,7 @@ const estadisticas = {
   intentadas: paginas.length,
   ok: cuenta((g) => g.estado === 'ok'),
   bloqueadas: cuenta((g) => g.estado === 'bloqueada_por_el_sitio'),
+  bloqueadas_seguridad: cuenta((g) => g.estado === 'bloqueada_por_seguridad'),
   vacias_js: cuenta((g) => g.estado === 'vacia_o_requiere_javascript'),
   errores: cuenta((g) => g.estado.startsWith('error')),
   otras: cuenta((g) => g.estado === 'no_es_html'),

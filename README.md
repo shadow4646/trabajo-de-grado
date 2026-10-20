@@ -45,3 +45,9 @@ Usa SearXNG y páginas reales, pero respuestas de Claude simuladas. La prueba re
 ## Seguridad
 
 No subir claves de API, archivos `.env` ni `settings.yml`. El `.gitignore` ya los excluye, junto con los documentos de las entregas. Si una clave llega a publicarse por error, hay que rotarla.
+
+### Protección contra SSRF en la lectura de páginas
+
+El agente de proveedores descarga páginas cuyas URLs salen de buscadores y de otras páginas, es decir, de contenido ajeno. `busqueda_js/05_leer.js` aplica `urlInsegura()` (en `00_lib.js`) a cada descarga y a cada redirección, que se sigue a mano con un máximo de 4 saltos. Bloquea esquemas distintos de http y https, puertos fuera de 80, 443, 8080 y 8443, `localhost`, nombres internos (`.local`, `.internal`, `.lan` y similares), nombres sin dominio, IPv6 literal y IPv4 privadas o reservadas (127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10). Se prueba con `node busqueda_js/test_seguridad.js`.
+
+Limitación conocida: el entorno de los nodos Code de n8n no permite resolver DNS, así que un nombre público que apunte a una IP privada (rebinding) no se detecta. En un servidor de empresa, complementarlo con reglas de salida del firewall o de Docker que impidan que el contenedor de n8n llegue a la red interna.
