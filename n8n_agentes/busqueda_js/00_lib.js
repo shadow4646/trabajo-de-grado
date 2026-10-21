@@ -27,7 +27,7 @@ const MODOS = {
     nombre: 'profunda', max_consultas: 95, por_familia: 4,
     familias: FAMILIAS_ORDEN,
     directorios: 8, max_paginas: 55, max_paginas_precio: 30, finalistas: 9, bola_nieve: true,
-    saturacion: true, presupuesto_ms: 220000, lote: 2, pausa_ms: 1500,
+    saturacion: true, presupuesto_ms: 170000, lote: 2, pausa_ms: 1500,
   },
 };
 
@@ -153,16 +153,17 @@ function enlacesDe(html, base) {
   return out;
 }
 
-async function buscarSearx(ctx, c) {
-  for (let intento = 0; intento < 2; intento++) {
+async function buscarSearx(ctx, c, opc) {
+  const intentos = (opc && opc.intentos) || 2;
+  for (let intento = 0; intento < intentos; intento++) {
     try {
       const r = await ctx.helpers.httpRequest({
-        method: 'GET', url: SEARX, qs: { q: c.q, format: 'json', language: c.idioma || 'es' }, json: true, timeout: 25000,
+        method: 'GET', url: SEARX, qs: { q: c.q, format: 'json', language: c.idioma || 'es' }, json: true, timeout: (opc && opc.timeout) || 25000,
       });
       const caidos = (Array.isArray(r?.unresponsive_engines) ? r.unresponsive_engines : []).map((x) => ({ motor: String(x[0]), motivo: String(x[1] || '').slice(0, 40) }));
       return { ok: true, resultados: Array.isArray(r?.results) ? r.results : [], motores_caidos: caidos };
     } catch (e) {
-      if (intento === 1) return { ok: false, resultados: [], motores_caidos: [], error: String(e.message || e).slice(0, 120) };
+      if (intento === intentos - 1) return { ok: false, resultados: [], motores_caidos: [], error: String(e.message || e).slice(0, 120) };
       await sleep(800);
     }
   }
@@ -190,6 +191,7 @@ function clasificarResultado(r) {
   if (/\.edu(\.|$)|repositorio|universidad|university/.test(d)) return 'academico';
   if (/asociacion|federacion|gremio|association|federation|camara de comercio|chamber/.test(t) && !/fabricamos|we manufacture/.test(t)) return 'gremio';
   if (/noticias|news|blog|periodico|diario|revista|magazine/.test(d + url)) return 'noticia';
+  if (/receta|recipe|cookpad|allrecipes|kiwilimon|directoalpaladar/.test(d + url)) return 'noticia';
   if (/market (research|report|size|analysis|insights)|cagr|informe de mercado|estudio de mercado|forecast to 20/.test(t)) return 'noticia';
   if (/\/restaurantes?\/|\/menu\b|\/menus\b/.test(url)) return 'restaurante';
   if (/mercadolibre|amazon\.|olx\.|alibaba|ebay|aliexpress|temu|rappi|exito\.com|carulla|jumbo|olimpica|alkosto|tiendasd1|d1\.com|ara\.com|linio|falabella|homecenter|walmart|carrefour|mercadona|lidl|instacart|supermercado|domicilios\.com|evisos|clasificad|segundamano|milanuncios|locanto|gumtree|craigslist/.test(d)) return 'tienda';
@@ -200,12 +202,18 @@ function clasificarResultado(r) {
 
 // Una pagina "habla del producto" si contiene una de sus frases completas, o la mayoria de las palabras de UNA sola frase.
 // Cada frase se evalua por separado: mezclar palabras de varios idiomas en una bolsa dejaba fuera paginas validas.
+const PALABRAS_VACIAS = new Set(['de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'y', 'o', 'con', 'sin', 'por', 'para', 'en', 'al', 'a', 'the', 'of', 'and', 'for', 'with', 'in']);
 function hablaDelProducto(plan, txtNorm) {
   const frases = [plan.producto, plan.nombre_en, ...(plan.sinonimos || [])].filter(Boolean).map(norm);
+  const pegado = txtNorm.replace(/[^a-z0-9]/g, '');
   return frases.some((f) => {
     if (txtNorm.includes(f)) return true;
-    const ws = f.split(' ').filter((w) => w.length >= 4);
-    return ws.length >= 2 && ws.filter((w) => txtNorm.includes(w)).length >= Math.max(1, Math.ceil(ws.length * 0.6));
+    // Palabras de 3 letras cuentan ("rib eye"); solo se descartan las palabras vacias (de, la, the...)
+    const ws = f.split(' ').filter((w) => w.length >= 3 && !PALABRAS_VACIAS.has(w));
+    if (ws.length >= 2 && ws.filter((w) => txtNorm.includes(w)).length >= Math.max(1, Math.ceil(ws.length * 0.6))) return true;
+    // "rib eye" tambien se escribe "ribeye": se compara sin espacios
+    const sinEspacios = ws.join('');
+    return ws.length >= 2 && sinEspacios.length >= 6 && pegado.includes(sinEspacios);
   });
 }
 
@@ -291,19 +299,17 @@ Reglas estrictas:
 - Usa SOLO datos del JSON. No inventes proveedores, precios, certificaciones, contactos, cifras ni URLs. Si algo es "No verificable" o "NO ENCONTRADO", dilo asi.
 - No repitas tablas ni listas de datos, el sistema las agrega aparte. Escribe prosa clara para una persona que debe decidir.
 - Respeta el orden del ranking recibido; explica por que el principal gana y que tendria que cumplirse para elegir al respaldo.
-- No conviertas monedas ni unidades, no calcules precios por tonelada y no cites rangos de precio esperados: usa las cifras tal como vienen en el JSON, con su moneda y unidad. Si el precio es "detal" y la compra es al por mayor, o si "comparable" es false, di que no es comparable y no lo uses para elegir al ganador por precio.
+- NO menciones precios, montos, monedas ni cual proveedor es mas barato o mas caro. El sistema ya presenta aparte el rango de precios, el cuadro comparable y el proveedor mas barato; cualquier cifra de dinero que escribas se eliminara. Solo puedes decir si un proveedor publica precio o no ("publica_precio") y que los precios al por mayor se piden por cotizacion.
 - Las certificaciones son lo que el proveedor declara en su propio sitio. Nunca digas que estan "verificadas" ante la entidad que las emite (INVIMA, ISO u otra): di "declarada en su sitio, pendiente de confirmar con el certificado vigente".
 - No califiques la reputacion de nadie. "menciones_en_fuentes_independientes" solo cuenta otras paginas que nombran a la empresa y no mide calidad. "posibles_alertas_por_verificar" son resultados que podrian ser de empresas homonimas: presentalas como algo por verificar, nunca como un hecho.
 - Si un proveedor esta fuera del pais de destino o su cobertura es "No verificable", dilo y explica el efecto en logistica y costo sin inventar cifras.
 - Este informe es un escaneo de mercado previo a una cotizacion formal (RFQ), no una cotizacion.
 - No uses guiones largos (el caracter de raya). Usa comas, puntos, dos puntos o parentesis.
-- El JSON trae "precios_encontrados": el rango de precios por kilo (al detal y al por mayor, en la moneda del destino), y cada proveedor del ranking puede traer "mejor_precio_comparable". Usa esas cifras tal cual vienen y atribuyelas SOLO al proveedor donde aparecen: nunca calcules, redondees, mezcles ni inventes un precio. Si no hay precios al por mayor publicos, dilo y explica que se obtienen por cotizacion.
-- No afirmes que un proveedor es mas barato o mas caro que otro salvo comparando sus "mejor_precio_comparable"; un proveedor sin ese dato no se puede comparar por precio.
 - El informe ya incluye el cuadro de precios y las fichas, asi que se breve: no repitas tablas ni listas de datos.
 - Escribe en espanol, en Markdown, con exactamente estas dos secciones:
 
 ## Resumen ejecutivo y recomendacion
-(maximo 120 palabras: donde conviene comprar al detal y al por mayor segun los precios encontrados, que proveedor es el principal y cual el respaldo, y que validar antes de comprar)
+(maximo 120 palabras: que proveedor es el principal y cual el respaldo segun identidad, certificaciones declaradas y cobertura, y que validar antes de comprar; sin precios)
 
 ## Riesgos y plan B
 (maximo 120 palabras: riesgos reales detectados y que hacer si el principal falla)`;

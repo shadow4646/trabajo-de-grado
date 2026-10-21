@@ -8,7 +8,7 @@ Proyecto de grado de Ingeniería Industrial. Este repositorio contiene solo el c
 |---|---|
 | `n8n_agentes/build_agente_inventarios.py` | Genera el workflow "Agente Gestor de Inventarios" (rotación, punto de reorden, clasificación ABC, informe mensual). |
 | `n8n_agentes/build_agente_proveedores.py` | Genera el workflow "Agente Cotizador de Proveedores" (búsqueda y comparación de proveedores). |
-| `n8n_agentes/busqueda_js/` | Código de los nodos del agente de proveedores (búsqueda rápida y profunda). `00_lib.js` es la biblioteca común, `01` a `09` son los nodos, `test_local.js` los prueba sin n8n y `mock_claude.js` simula la API de Claude para probar sin gastar. |
+| `n8n_agentes/busqueda_js/` | Código de los nodos del agente de proveedores (búsqueda rápida y profunda). `00_lib.js` es la biblioteca común, `01` a `09` son los nodos, `test_local.js` los prueba sin n8n, `test_logica.js` y `test_seguridad.js` son pruebas automáticas y `mock_claude.js` simula la API de Claude para probar sin gastar. |
 | `n8n_agentes/*.json` | Workflows ya generados, listos para importar en n8n. |
 | `n8n_agentes/inventario_historico.csv` | CSV de ejemplo para probar el agente de inventarios. |
 | `n8n_agentes/searxng/` | Plantilla de configuración del buscador local SearXNG. |

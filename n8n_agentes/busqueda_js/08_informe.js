@@ -71,6 +71,12 @@ if (st.detal) lineasResumen.push(lineaStat(st.detal, 'Al detal'));
 else if (plan.venta !== 'mayor') lineasResumen.push('- **Al detal:** no se encontraron precios comparables.');
 if (st.mayor) lineasResumen.push(lineaStat(st.mayor, 'Al por mayor'));
 else if (plan.venta !== 'detal') lineasResumen.push('- **Al por mayor:** no hay precios publicos comparables; se piden por cotizacion (borrador al final del informe).');
+// Lo mas barato lo calcula el codigo (el narrador no habla de precios)
+const masBarata = (venta) => [...ofertasV].filter((o) => o.venta === venta && o.precio_base_destino !== null && o.base === baseDom).sort(ordenOferta)[0];
+for (const [venta, etiqueta] of [['detal', 'Lo mas barato al detal'], ['mayor', 'Lo mas barato al por mayor']]) {
+  const b = masBarata(venta);
+  if (b) lineasResumen.push(`- **${etiqueta}:** ${b.nombre === b.dominio ? b.nombre : b.nombre + ' (' + b.dominio + ')'}, ${num(b.precio_base_destino)} ${mdest}/${baseDom}${b.cantidad_total ? ` (${num(b.cantidad_total)} ${b.base} a ${num(b.precio)} ${b.moneda || ''})` : ''}.`);
+}
 const fx = v.fx || {};
 if (fx.fuente) lineasResumen.push(`- Tipo de cambio a ${mdest}: ${fx.fuente}${fx.fecha ? ', actualizado ' + fx.fecha : ''}. Es una referencia, no una tasa oficial.`);
 const GRUPOS_VENTA = [['detal', 'Al detal'], ['mayor', 'Al por mayor'], ['sin_clasificar', 'Venta no indicada']];

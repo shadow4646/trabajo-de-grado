@@ -132,17 +132,22 @@ const NEGATIVAS = /estafa|fraude|scam|reclamo|queja|denuncia|sancion|multa|retir
 const consultasReputacion = [];
 leer.motores_busqueda = leer.motores_busqueda || {};
 let primeroRep = true;
+// Cada fase tiene un presupuesto de tiempo: el ejecutor de n8n corta cualquier nodo de codigo que pase de 300 s
+const tRep = Date.now();
+let repOmitidas = 0;
 for (const lote of trozos(candidatos, 2)) {
   const nombre = (c) => c.nombre;
+  if (Date.now() - tRep > 60000) { repOmitidas += lote.length; continue; }
   if (!primeroRep) await sleep(leer.cfg?.pausa_ms || 0);
   primeroRep = false;
-  const res = await Promise.all(lote.map((c) => buscarSearx(this, { q: `"${nombre(c)}" ${plan.producto} opiniones reclamos`, idioma: 'es' })));
+  const res = await Promise.all(lote.map((c) => buscarSearx(this, { q: `"${nombre(c)}" ${plan.producto} opiniones reclamos`, idioma: 'es' }, { timeout: 15000, intentos: 1 })));
   res.forEach((r, i) => {
     contarMotores(leer.motores_busqueda, r);
     lote[i].rep_resultados = r.resultados.slice(0, 15).map((x) => ({ url: x.url, dominio: dominio(x.url), titulo: x.title || '', contenido: x.content || '' }));
     consultasReputacion.push({ dominio: lote[i].dominio, resultados: r.resultados.length });
   });
 }
+console.log(`[07] reputacion: ${((Date.now() - tRep) / 1000).toFixed(1)} s, ${consultasReputacion.length} consultas, ${repOmitidas} omitidas por tiempo`);
 const fuentesGenerales = leer.resultados || [];
 for (const c of candidatos) {
   const toks = [c.marca_dom, c.marca_emp].filter((t) => t && t.length >= 5);
@@ -158,12 +163,14 @@ for (const c of candidatos) {
 const monedaDestino = MONEDA_PAIS[norm(plan.pais_destino || '')] || 'COP';
 let fx = { ok: false, moneda: monedaDestino, fecha: null, fuente: null };
 let ratesFx = {};
+const tFx = Date.now();
 if (ofertasCrudas.some((o) => o.moneda && o.moneda !== monedaDestino)) {
   try {
-    const r = await this.helpers.httpRequest({ method: 'GET', url: FX_URL, json: true, timeout: 12000 });
+    const r = await this.helpers.httpRequest({ method: 'GET', url: FX_URL, json: true, timeout: 8000 });
     if (r && r.rates && r.rates[monedaDestino]) { ratesFx = r.rates; fx = { ok: true, moneda: monedaDestino, fecha: r.time_last_update_utc || null, fuente: 'ExchangeRate-API (open.er-api.com)' }; }
   } catch (e) { fx.error = String(e.message || e).slice(0, 80); }
 } else if (ofertasCrudas.length) fx = { ok: true, moneda: monedaDestino, fecha: null, fuente: null };
+console.log(`[07] tipo de cambio: ${((Date.now() - tFx) / 1000).toFixed(1)} s, ok=${fx.ok}${fx.error ? ' error=' + fx.error : ''}`);
 const aDestino = (valor, moneda) => {
   if (!moneda) return null;
   if (moneda === monedaDestino) return valor;
@@ -258,6 +265,7 @@ for (const c of candidatos) {
   else if (req.length && certCal === 'No verificable') c.veredicto = 'Condicionado: validar certificaciones';
   else if (['Bajo', 'No verificable'].includes(c.cal.identidad)) c.veredicto = 'Condicionado: identidad poco verificada';
   else if (c.alertas.length) c.veredicto = 'Condicionado: revisar alertas de reputacion';
+  else if (dest && !['Local', 'No evaluada'].includes(cob)) c.veredicto = 'Condicionado: sin presencia verificada en el pais de destino';
   else c.veredicto = 'Preseleccionado';
 }
 
@@ -303,15 +311,13 @@ else {
   if (!statsPrecios.detal && plan.venta !== 'mayor') riesgos.push('No se encontraron precios al detal comparables.');
   if (ofertas.some((o) => o.moneda && o.precio_base_destino === null && o.cantidad_total)) riesgos.push(`Algunos precios no se pudieron pasar a ${monedaDestino} porque el tipo de cambio no estuvo disponible.`);
 }
-const resumenStats = (s) => (s ? { ofertas: s.n, minimo: redondeo(s.minimo), mediana: redondeo(s.mediana), maximo: redondeo(s.maximo) } : null);
 
 // ---------- 6. Solicitud a Claude para la narrativa ----------
 const rankingCompacto = ranking.map((c, i) => ({
   posicion: i + 1, proveedor: nombreDe(c), url: c.url, veredicto: c.veredicto, calificaciones: c.cal,
-  mejor_precio_comparable: c.mejor_precio_dest != null ? { valor: redondeo(c.mejor_precio_dest), moneda: monedaDestino, por: baseDominante } : null,
   datos_verificados: {
     tipo: c.tipo?.valor || null, productos: c.productos?.valor || null, pais: c.pais?.valor || null, ciudad: c.ciudad?.valor || null,
-    certificaciones: certsDe(c), precio: c.precio ? { valor: c.precio.valor, moneda: c.precio.moneda, unidad: c.precio.unidad, condicion: c.precio.condicion, comparable: !precioNoComparable(c) } : null,
+    certificaciones: certsDe(c), publica_precio: !!c.precio || c.mejor_precio_dest != null,
     moq: c.moq?.valor || null, incoterm: c.incoterm?.valor || null, plazo_entrega: c.plazo?.valor || null, anios_operacion: c.anios?.valor || null,
     capacidad: c.capacidad?.valor || null, envio_internacional: c.envio?.valor ?? null, correos_encontrados: c.emails.length, telefonos_encontrados: c.telefonos.length,
   },
@@ -322,11 +328,7 @@ const rankingCompacto = ranking.map((c, i) => ({
 const entradaNarrativa = {
   solicitud: { producto: plan.producto, especificacion: plan.especificacion, cantidad_pedido: plan.cantidad_pedido, cantidad_anual: plan.cantidad_anual, pais_destino: plan.pais_destino, venta: plan.venta, certificaciones_requeridas: plan.certificaciones_requeridas, kraljic_provisional: plan.kraljic },
   supuestos: plan.supuestos, prioridad_del_ranking: riesgoPrimero ? 'riesgo y continuidad primero' : 'precio primero',
-  precios_encontrados: {
-    moneda_destino: monedaDestino, precio_por: baseDominante, ofertas_con_precio: ofertasUtiles.length,
-    al_detal: resumenStats(statsPrecios.detal), al_por_mayor: resumenStats(statsPrecios.mayor),
-  },
-  ranking: rankingCompacto, sensibilidad, riesgos_generales: riesgos,
+  ranking: rankingCompacto, riesgos_generales: riesgos,
   cobertura: { modo: leer.modo, consultas: leer.consultas_ejecutadas, dominios_distintos: leer.dominios_distintos, paginas_leidas_ok: leer.estadisticas_lectura.ok, finalistas: candidatos.length },
 };
 const sinFinalistas = candidatos.length === 0 && ofertasUtiles.length === 0;

@@ -38,12 +38,23 @@ const candidatos = [...porDominio.values()].map((g) => ({
 const NO_LEER = ['noticia', 'academico', 'pdf', 'restaurante', ...(plan.venta === 'mayor' ? ['tienda'] : [])];
 let dirs = 0;
 const aLeer = [];
-for (const c of candidatos) {
-  if (aLeer.length >= cfg.max_paginas) break;
-  if (NO_LEER.includes(c.tipo)) continue;
-  if (c.tipo === 'directorio') { if (dirs >= 4) continue; dirs++; }
+const elegidos = new Set();
+const meter = (c) => {
+  if (aLeer.length >= cfg.max_paginas || elegidos.has(c.dominio) || NO_LEER.includes(c.tipo)) return false;
+  if (c.tipo === 'directorio') { if (dirs >= 4) return false; dirs++; }
   aLeer.push(c);
+  elegidos.add(c.dominio);
+  return true;
+};
+// Una parte de las lecturas se reserva para las paginas que salieron de las consultas de precio ("precios" y "detal"):
+// sin esta reserva, las consultas de directorios, PDF y gremios del modo profundo las dejaban fuera del corte.
+const cuotaPrecio = Math.ceil(cfg.max_paginas * 0.4);
+let usadasPrecio = 0;
+for (const c of candidatos) {
+  if (usadasPrecio >= cuotaPrecio) break;
+  if (c.familias.some((f) => f === 'detal' || f === 'precios') && meter(c)) usadasPrecio++;
 }
+for (const c of candidatos) meter(c);
 
 const porTipo = {};
 candidatos.forEach((c) => { porTipo[c.tipo] = (porTipo[c.tipo] || 0) + 1; });
