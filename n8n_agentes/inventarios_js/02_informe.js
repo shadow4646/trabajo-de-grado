@@ -203,7 +203,13 @@ th,td{border:1px solid #bbb;padding:5px 8px;text-align:left;vertical-align:top}t
 code{background:#f0f0f0;padding:1px 4px}</style></head><body>${mdAHtml(md)}</body></html>`;
 
   // ---------- CSV (separador punto y coma y coma decimal: abre bien en Excel en espanol) ----------
-  const campo = (v) => { const s = typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : String(v ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  // Los textos vienen del sistema de inventario (nombres, proveedores, motivos). Uno que empiece con = + - @ (o tabulador o
+  // retorno) lo interpretaria Excel como formula al abrir el CSV: se le antepone una comilla simple. Los numeros no se tocan.
+  const campo = (v) => {
+    let s = typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : String(v ?? '');
+    if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
   const csvDe = (enc, filas) => '﻿' + [enc, ...filas].map((f) => f.map(campo).join(';')).join('\r\n') + '\r\n';
   const csvPedido = csvDe(['sku', 'producto', 'proveedor', 'urgencia', 'cantidad', 'unidad', 'costo_unitario', 'costo_total', 'motivo'],
     aSurtir.filter((r) => r.cantidad > 0).sort((a, b) => (a.proveedor || '').localeCompare(b.proveedor || '') || (a.accion === 'COMPRAR URGENTE' ? -1 : 1)).map((r) => [r.sku, r.nombre, r.proveedor, r.accion === 'COMPRAR URGENTE' ? 'URGENTE' : 'NORMAL', r.cantidad, r.unidad, r.costo, r.valor_compra, r.motivo]));

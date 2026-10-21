@@ -74,6 +74,23 @@ fs.writeFileSync(path.join(dir, '_prueba_chat.md'), inf.chat, 'utf8');
 const dashes = (inf.md + inf.chat).split('').filter((c) => c === String.fromCharCode(0x2014) || c === String.fromCharCode(0x2013)).length;
 if (dashes) { fallos++; console.log('FALLA: hay guiones largos en el informe'); }
 if (/undefined|NaN|\[object/.test(inf.md + inf.chat)) { fallos++; console.log('FALLA: el informe contiene undefined, NaN u [object]:', ((inf.md + inf.chat).match(/.{0,40}(undefined|NaN|\[object).{0,40}/) || [''])[0]); }
+// ---- inyeccion de formulas en los CSV: textos hostiles que vienen del sistema de inventario ----
+const maeHostil = csv(leer('datos_ejemplo/maestro_ejemplo.csv'));
+maeHostil[0].producto = '=HYPERLINK("http://evil.test","clic")';
+maeHostil[0].proveedor = '@SUM(A1:A9)';
+maeHostil[1].producto = "+cmd|' /C calc'!A0";
+maeHostil[2].producto = '-2+3';
+maeHostil[3].proveedor = '\t=1+1';
+const datosHostiles = E.normalizar(csv(leer('datos_ejemplo/movimientos_ejemplo.csv')), maeHostil, { mapeo: {} });
+const resHostil = E.calcularInventario(datosHostiles, { mes }, {});
+const infHostil = E.armarInforme({ res: resHostil, ind: E.indicadores(resHostil, resHostil.P), cfg: { fuente: 'csv', moneda: '$' }, comentario: '', uso: null, tiempos: 0 });
+for (const [nombre, texto] of [['pedido', infHostil.csvPedido], ['detalle', infHostil.csvDetalle]]) {
+  const celdas = texto.replace(/^﻿/, '').split(/\r\n/).flatMap((linea) => linea.split(';'));
+  const peligrosas = celdas.filter((c) => /^"?[=+@\t\r]/.test(c) || /^"?-[^0-9,.]/.test(c));
+  if (peligrosas.length) { fallos++; console.log(`FALLA: el CSV de ${nombre} tiene celdas que Excel leeria como formula:`, peligrosas.slice(0, 3)); }
+}
+if (!infHostil.csvDetalle.includes("'=HYPERLINK") || !infHostil.csvDetalle.includes("'@SUM")) { fallos++; console.log('FALLA: los textos hostiles no quedaron neutralizados con la comilla simple'); }
+
 console.log(`informe: ${inf.md.length} caracteres, resumen ${JSON.stringify(inf.resumen)}`);
 console.log(`\ntest_local: fallos ${fallos}`);
 process.exit(fallos ? 1 : 0);
