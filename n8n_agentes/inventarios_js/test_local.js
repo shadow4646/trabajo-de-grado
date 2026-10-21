@@ -81,13 +81,19 @@ maeHostil[0].proveedor = '@SUM(A1:A9)';
 maeHostil[1].producto = "+cmd|' /C calc'!A0";
 maeHostil[2].producto = '-2+3';
 maeHostil[3].proveedor = '\t=1+1';
+maeHostil[4].producto = 'Tornillo, =1+1';
+maeHostil[5].proveedor = 'Acme; @SUM(A1:A9)';
+maeHostil[6].producto = 'Pieza ,-2+3 mas';
+maeHostil[7].producto = 'Item\n=HYPERLINK("http://evil.test")';
 const datosHostiles = E.normalizar(csv(leer('datos_ejemplo/movimientos_ejemplo.csv')), maeHostil, { mapeo: {} });
 const resHostil = E.calcularInventario(datosHostiles, { mes }, {});
 const infHostil = E.armarInforme({ res: resHostil, ind: E.indicadores(resHostil, resHostil.P), cfg: { fuente: 'csv', moneda: '$' }, comentario: '', uso: null, tiempos: 0 });
+// Se simula el peor caso: abrir el archivo con CUALQUIER separador (coma, punto y coma, tabulador, salto de linea).
+// Ninguna celda resultante puede empezar con = + - @ salvo que sea un numero puro.
 for (const [nombre, texto] of [['pedido', infHostil.csvPedido], ['detalle', infHostil.csvDetalle]]) {
-  const celdas = texto.replace(/^﻿/, '').split(/\r\n/).flatMap((linea) => linea.split(';'));
-  const peligrosas = celdas.filter((c) => /^"?[=+@\t\r]/.test(c) || /^"?-[^0-9,.]/.test(c));
-  if (peligrosas.length) { fallos++; console.log(`FALLA: el CSV de ${nombre} tiene celdas que Excel leeria como formula:`, peligrosas.slice(0, 3)); }
+  const celdas = texto.replace(/^﻿/, '').split(/[,;\t\r\n]/);
+  const peligrosas = celdas.filter((c) => /^\s*"?\s*[=@+\-]/.test(c) && !/^\s*"?-?\d+([.,]\d+)?"?\s*$/.test(c));
+  if (peligrosas.length) { fallos++; console.log(`FALLA: el CSV de ${nombre} tiene celdas que Excel leeria como formula con algun separador:`, peligrosas.slice(0, 4)); }
 }
 if (!infHostil.csvDetalle.includes("'=HYPERLINK") || !infHostil.csvDetalle.includes("'@SUM")) { fallos++; console.log('FALLA: los textos hostiles no quedaron neutralizados con la comilla simple'); }
 

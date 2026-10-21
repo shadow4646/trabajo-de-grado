@@ -203,12 +203,17 @@ th,td{border:1px solid #bbb;padding:5px 8px;text-align:left;vertical-align:top}t
 code{background:#f0f0f0;padding:1px 4px}</style></head><body>${mdAHtml(md)}</body></html>`;
 
   // ---------- CSV (separador punto y coma y coma decimal: abre bien en Excel en espanol) ----------
-  // Los textos vienen del sistema de inventario (nombres, proveedores, motivos). Uno que empiece con = + - @ (o tabulador o
-  // retorno) lo interpretaria Excel como formula al abrir el CSV: se le antepone una comilla simple. Los numeros no se tocan.
+  // Los textos vienen del sistema de inventario (nombres, proveedores, motivos). Excel interpreta como formula un texto que
+  // empiece con = + - @, y no solo al inicio de la celda: si el archivo se abre con otro separador (coma en vez de punto y
+  // coma), un texto como "Tornillo, =1+1" se parte y la segunda mitad queda al inicio de una celda. Por eso se antepone una
+  // comilla simple a CADA fragmento que, tras un separador posible (, ; tabulador o salto de linea), empiece con esos
+  // caracteres. Los numeros no se tocan. Las celdas con coma, punto y coma, comillas o saltos de linea van entre comillas.
+  const neutralizar = (s) => s.replace(/(^|[,;\t\r\n]\s*)([=@]|[+\-](?=\S))/g, (m, antes, c) => `${antes}'${c}`);
   const campo = (v) => {
-    let s = typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : String(v ?? '');
-    if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    const esNumero = typeof v === 'number';
+    let s = esNumero ? String(Math.round(v * 100) / 100).replace('.', ',') : String(v ?? '');
+    if (!esNumero) s = neutralizar(s);
+    return /[;,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const csvDe = (enc, filas) => '﻿' + [enc, ...filas].map((f) => f.map(campo).join(';')).join('\r\n') + '\r\n';
   const csvPedido = csvDe(['sku', 'producto', 'proveedor', 'urgencia', 'cantidad', 'unidad', 'costo_unitario', 'costo_total', 'motivo'],
