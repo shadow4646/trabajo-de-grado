@@ -102,6 +102,27 @@ const hoy = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bo
 const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const slug = (t) => norm(t).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'producto';
 
+// Markdown en linea a HTML, en UNA sola pasada: el texto y las URLs se separan primero y cada pieza se escapa por su
+// cuenta. Nunca se aplica una regex sobre HTML ya generado (podria anidar un enlace dentro del atributo href de otro).
+// Los textos vienen de paginas ajenas, asi que una URL con comillas, signos < > o espacios no se convierte en enlace.
+function inlineHtml(t) {
+  const formato = (s) => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  const urlValida = (u) => /^https?:\/\/[^\s"'<>`\\]+$/i.test(u);
+  const texto = String(t ?? '');
+  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<)]+)/g;
+  const partes = [];
+  let ultimo = 0;
+  let m;
+  while ((m = re.exec(texto))) {
+    partes.push(formato(esc(texto.slice(ultimo, m.index))));
+    const url = m[2] || m[3];
+    partes.push(urlValida(url) ? `<a href="${esc(url)}" rel="noopener noreferrer">${esc(m[1] || url)}</a>` : esc(m[0]));
+    ultimo = re.lastIndex;
+  }
+  partes.push(formato(esc(texto.slice(ultimo))));
+  return partes.join('');
+}
+
 function extraerJson(texto) {
   const t = String(texto ?? '');
   const a = t.indexOf('{');

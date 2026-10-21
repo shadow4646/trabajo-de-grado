@@ -22,6 +22,7 @@ const debePermitir = [
   'https://www.dominio.co/ruta/ñandú?x=á', 'http://sitio.com.co/', 'https://xn--maana-pta.com/', 'https://www.molino-el-lobo.com.co./', 'https://ejemplo.com/a%5Cb',
 ];
 
+const lib2 = new Function(lib + '\nreturn { inlineHtml };')();
 let fallos = 0;
 for (const u of debeBloquear) if (!urlInsegura(u)) { console.log('FALLA (debia bloquear):', u); fallos++; }
 for (const u of debePermitir) if (urlInsegura(u)) { console.log('FALLA (debia permitir):', u, '->', urlInsegura(u)); fallos++; }
@@ -58,4 +59,32 @@ for (const esq of ['http://', 'https://', 'http:\\\\', 'http:/', 'http:///', 'HT
 }
 console.log(`diferencial: ${probadas} variantes, ${dejadasPasar} dejadas pasar, ${peligrosas} peligrosas`);
 fallos += peligrosas;
+// (la salida se decide al final del archivo)
+
+// ---- inlineHtml: el HTML del informe se arma con texto de paginas ajenas ----
+const hostiles = [
+  '[x](https://a.com/https://evil.com/)', 'https://a.com/https://evil.com/x', '[x](https://a.com/"onmouseover="alert(1))',
+  'https://a.com/"onmouseover="alert(1)', "[x](https://a.com/'><script>alert(1)</script>)", '<img src=x onerror=alert(1)>',
+  '[a](javascript:alert(1))', '[a](https://a.com/x) y [b](https://b.com/y?z=https://c.com)', '**<b>negrita</b>** `<i>`',
+  '[<script>alert(1)</script>](https://a.com/)', 'https://a.com/x<script>alert(1)</script>', '[x](https://a.com/\\" onclick=alert(1))',
+  '[x](data:text/html,<script>alert(1)</script>)', '"><svg onload=alert(1)>', 'https://a.com/?a=1&b=2&c="3"',
+];
+let htmlFallos = 0;
+for (const h of hostiles) {
+  const out = lib2.inlineHtml(h);
+  // Se quitan las etiquetas permitidas; lo que quede no puede contener ni < ni >
+  const sinPermitidas = out
+    .replace(/<a href="[^"<>]*" rel="noopener noreferrer">/g, '').replace(/<\/a>|<\/?strong>|<\/?code>/g, '');
+  const hrefs = out.match(/<a href="[^"]*"/g) || [];
+  const anidado = hrefs.some((x) => /<|>/.test(x.slice(9)));
+  // Toda etiqueta que aparezca en la salida tiene que ser una de las que genera la funcion, con la forma exacta
+  const etiquetas = out.match(/<[^>]*>/g) || [];
+  const soloPermitidas = etiquetas.every((e) => /^<a href="[^"<>]*" rel="noopener noreferrer">$|^<\/a>$|^<\/?strong>$|^<\/?code>$/.test(e));
+  if (/[<>]/.test(sinPermitidas) || anidado || !soloPermitidas) { htmlFallos++; console.log('HTML PELIGROSO:', JSON.stringify(h), '->', out); }
+}
+console.log(`inlineHtml: ${hostiles.length} entradas hostiles, peligrosas: ${htmlFallos}`);
+fallos += htmlFallos;
+// Un enlace legitimo debe seguir funcionando
+const ok = lib2.inlineHtml('[imarkt.co](https://imarkt.co/rib-eye-bloque/) y **54.000 COP/kg**');
+if (!ok.includes('<a href="https://imarkt.co/rib-eye-bloque/" rel="noopener noreferrer">imarkt.co</a>') || !ok.includes('<strong>54.000 COP/kg</strong>')) { console.log('FALLA: el enlace legitimo no se genero bien:', ok); fallos++; }
 process.exit(fallos ? 1 : 0);

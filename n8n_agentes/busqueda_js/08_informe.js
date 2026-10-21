@@ -253,9 +253,7 @@ L.push('');
 const mdArchivo = sinGuiones(L.join('\n')).replace(/\n{3,}/g, '\n\n');
 
 // ---------- HTML ----------
-const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>')
-  .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
-  .replace(/(?<!["'>=])(https?:\/\/[^\s<)]+)/g, '<a href="$1">$1</a>');
+const inline = inlineHtml;
 const mdAHtml = (md) => {
   const out = [];
   let lista = false;
