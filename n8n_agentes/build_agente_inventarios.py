@@ -1,361 +1,191 @@
 # -*- coding: utf-8 -*-
-"""Construye el workflow de n8n "Agente Gestor de Inventarios" como JSON importable."""
+"""Genera el workflow de n8n "Agente Gestor de Inventarios".
+
+Lee los movimientos y los productos desde un CSV, un Excel, una base SQL o la API de un programa, calcula todo con
+codigo determinista (rotacion, quiebres, productos sin movimiento, politica de reposicion) y entrega un informe en
+HTML, Markdown y dos CSV para Excel. La IA (Claude Haiku) solo redacta un comentario corto y es opcional.
+El codigo de cada nodo vive en inventarios_js/ y se prueba en local con inventarios_js/test_local.js.
+
+Uso: python build_agente_inventarios.py [--prueba "informe de 2026-09"] [--mock URL]
+"""
 import json
+import pathlib
+import sys
 
-CSV_PATH = r"C:\Users\monca\.n8n-files\inventario_historico.csv"
+BASE = pathlib.Path(__file__).parent
+JS = BASE / "inventarios_js"
+LIB = (JS / "00_lib.js").read_text(encoding="utf-8")
+MOTOR = (JS / "01_motor.js").read_text(encoding="utf-8")
+INFORME = (JS / "02_informe.js").read_text(encoding="utf-8")
 
-SYSTEM_PROMPT = """Eres un gerente de inventarios experto, con el nivel de un profesional certificado en gestion de cadena de suministro (APICS/ASCM). Tu trabajo es analizar el historial de consumo mensual de los productos de una empresa (de cualquier tamano, desde una PYME hasta una gran empresa) y redactar un informe mensual de rotacion de inventario con recomendaciones de compra que eviten tanto el sobrestock como el quiebre de stock.
-
-DATOS QUE RECIBES
-Recibiras, por cada producto, datos ya precalculados: meses de historial, consumo promedio mensual, desviacion del consumo, stock actual, lead time en dias, punto de reorden, stock de seguridad, accion recomendada (COMPRAR o NO COMPRAR AHORA, que depende de si el stock esta en o bajo el punto de reorden), cantidad sugerida de compra, rotacion anual estimada, valor de consumo anual, clase ABC, y meses consecutivos sin movimiento. No inventes ni recalcules estos numeros: tu trabajo es interpretarlos con criterio profesional y redactar las recomendaciones finales en lenguaje claro. La fecha actual y el periodo analizado te llegan en el mensaje del usuario: usalos tal cual y nunca inventes una fecha.
-
-LIMITES DE LOS CALCULOS QUE DEBES DECLARAR EN EL INFORME: el pronostico es un promedio simple de los meses disponibles, el stock de seguridad usa un nivel de servicio unico del 95% y no modela variabilidad del lead time ni ordenes en transito, y la clasificacion ABC con pocos productos es solo orientativa. Mencionalo en una linea al final del informe.
-
-CRITERIOS QUE DEBES APLICAR AL INTERPRETAR Y RECOMENDAR
-
-1. Clasificacion ABC: los productos clase A (mayor valor de consumo acumulado) necesitan seguimiento mas cercano y menor margen de error en la recomendacion; los de clase C toleran reglas mas simples y un stock de seguridad mas generoso sin que eso sea un problema.
-
-2. Rotacion de inventario: compara la rotacion anual estimada de cada producto contra rangos tipicos orientativos (alimentos o insumos de alta rotacion: 10-18+ veces al ano; manufactura general: 4-8; distribucion o bienes de bajo movimiento: 2-6). Si la rotacion esta muy por debajo de lo esperable para ese tipo de producto, es senal de sobrestock: recomienda reducir o incluso pausar la proxima compra. Si esta muy por encima, no lo celebres automaticamente, podria indicar quiebres de stock frecuentes.
-
-3. Punto de reorden y stock de seguridad: si el stock actual ya esta por debajo del punto de reorden, marca el producto como prioritario para compra inmediata. Explica siempre el trade-off entre stock de seguridad (menor riesgo de quiebre, mas capital inmovilizado) en terminos simples cuando sea relevante para la decision.
-
-4. Confianza del dato: con menos de 6 meses de historial, aclara explicitamente que el pronostico es preliminar y tiene menor confiabilidad. Con 12 o mas meses, puedes hablar con mas seguridad de patrones y tendencias.
-
-5. Demanda intermitente: si un producto tiene varios meses consecutivos en cero consumo, no lo trates como un producto de rotacion normal; senala que su patron es esporadico y que la cantidad sugerida calculada con formulas estandar puede no ser confiable para el.
-
-6. Stock muerto: si un producto lleva 3 o mas meses consecutivos sin ningun consumo y mantiene stock, senalalo explicitamente como candidato a liquidar o descontinuar, independientemente de su clase ABC.
-
-7. Ajusta el nivel de detalle a lo que la empresa necesita: si hay pocos productos, se directo y conciso; si hay muchos, organiza el informe por clase ABC para que el lector priorice.
-
-FORMATO DE INFORME OBLIGATORIO (sin emojis, sin simbolos decorativos)
-
-INFORME DE ROTACION DE INVENTARIO
-Periodo analizado: [periodo recibido en los datos]
-Fecha de generacion: [fecha actual recibida en el mensaje]
-
-RESUMEN EJECUTIVO
-[2 a 4 frases con el estado general del inventario y las alertas mas importantes del mes]
-
-PRODUCTOS CLASE A (alto valor, seguimiento prioritario)
-[para cada producto: nombre, rotacion anual estimada, stock actual, punto de reorden, cantidad sugerida de compra, justificacion breve de 1-2 lineas]
-
-PRODUCTOS CLASE B
-[mismo formato, puede ser mas breve]
-
-PRODUCTOS CLASE C
-[mismo formato, puede ser mas breve]
-
-ALERTAS
-Riesgo de quiebre de stock: [productos con stock por debajo del punto de reorden]
-Riesgo de sobrestock: [productos con rotacion muy por debajo de lo esperable]
-Posible stock muerto: [productos con 3+ meses sin movimiento]
-
-RECOMENDACION GENERAL DEL MES
-[resumen ejecutivo de 3 a 5 lineas con las compras prioritarias del mes y el motivo principal]
-"""
-
-CODE_JS = r"""const rows = $input.all().map(item => item.json);
-const porProducto = {};
-for (const r of rows) {
-  const key = r.producto;
-  if (!porProducto[key]) porProducto[key] = [];
-  porProducto[key].push(r);
-}
-
-function mean(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
-function std(arr) {
-  if (arr.length < 2) return 0;
-  const m = mean(arr);
-  const variance = arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);
-  return Math.sqrt(variance);
-}
-
-const Z_95 = 1.645;
-const resultados = [];
-
-for (const producto in porProducto) {
-  const historial = porProducto[producto].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
-  const consumos = historial.map(h => Number(h.cantidad_consumida));
-  const mesesHistoria = consumos.length;
-  const consumoPromedio = mean(consumos);
-  const desviacion = mesesHistoria >= 3 ? std(consumos) : 0;
-  const ultimo = historial[historial.length - 1];
-  const stockActual = Number(ultimo.stock_actual);
-  const costoUnitario = Number(ultimo.costo_unitario);
-  const leadTimeDias = Number(ultimo.lead_time_dias || 30);
-  const leadTimeMeses = leadTimeDias / 30;
-
-  const stockSeguridad = Z_95 * desviacion * Math.sqrt(leadTimeMeses);
-  const puntoReorden = (consumoPromedio * leadTimeMeses) + stockSeguridad;
-  const debeComprar = stockActual <= puntoReorden;
-  const cantidadSugerida = debeComprar
-    ? Math.max(0, Math.round((puntoReorden + consumoPromedio) - stockActual))
-    : 0;
-
-  const consumoAnualEstimado = consumoPromedio * 12;
-  const rotacion = stockActual > 0 ? (consumoAnualEstimado / stockActual) : null;
-  const valorConsumoAnual = consumoAnualEstimado * costoUnitario;
-
-  let mesesSinMovimiento = 0;
-  for (let i = historial.length - 1; i >= 0; i--) {
-    if (Number(historial[i].cantidad_consumida) === 0) mesesSinMovimiento++;
-    else break;
-  }
-
-  resultados.push({
-    producto,
-    meses_historia: mesesHistoria,
-    consumo_promedio_mensual: Math.round(consumoPromedio * 100) / 100,
-    desviacion_consumo: Math.round(desviacion * 100) / 100,
-    stock_actual: stockActual,
-    lead_time_dias: leadTimeDias,
-    punto_reorden: Math.round(puntoReorden),
-    stock_seguridad: Math.round(stockSeguridad),
-    accion_recomendada: debeComprar ? 'COMPRAR (stock en o bajo el punto de reorden)' : 'NO COMPRAR AHORA (stock sobre el punto de reorden)',
-    cantidad_sugerida_compra: cantidadSugerida,
-    rotacion_anual_estimada: rotacion !== null ? Math.round(rotacion * 100) / 100 : null,
-    valor_consumo_anual: Math.round(valorConsumoAnual),
-    meses_consecutivos_sin_movimiento: mesesSinMovimiento,
-  });
-}
-
-resultados.sort((a, b) => b.valor_consumo_anual - a.valor_consumo_anual);
-const totalValor = resultados.reduce((s, r) => s + r.valor_consumo_anual, 0);
-let acumuladoPrevio = 0;
-for (const r of resultados) {
-  const pctPrevio = totalValor > 0 ? (acumuladoPrevio / totalValor) * 100 : 0;
-  r.clase_abc = pctPrevio < 80 ? 'A' : (pctPrevio < 95 ? 'B' : 'C');
-  acumuladoPrevio += r.valor_consumo_anual;
-}
-
-return [{ json: { fecha_analisis: $now.toFormat('yyyy-MM'), productos: resultados } }];
-"""
-
-REVIEWER_SYSTEM_PROMPT = """Eres un auditor de calidad para recomendaciones de inventario generadas por otro agente de IA. Revisa el informe generado y los datos que lo sustentan, aplicando los mismos criterios profesionales de gestion de inventarios: clasificacion ABC, rotacion esperada segun el tipo de producto, coherencia entre stock actual, punto de reorden y cantidad sugerida de compra, deteccion correcta de demanda intermitente y de posible stock muerto.
-
-Se critico, no un aprobador automatico. Si algo no cuadra (por ejemplo, una cantidad sugerida de compra alta para un producto de rotacion muy baja, o un producto con varios meses sin consumo al que se le sugiere comprar mas sin justificacion), senalalo explicitamente con el motivo.
-
-Formato de salida obligatorio (sin emojis, sin simbolos decorativos):
-
-REVISION DE CALIDAD (Agente Revisor)
-Fecha: [fecha actual recibida en el mensaje]
-Veredicto: [APROBADO / APROBADO CON OBSERVACIONES / REQUIERE REVISION]
-Observaciones: [lista breve y concreta; si no hay ninguna, escribe "Sin observaciones, el informe es coherente con los datos y los criterios de gestion de inventarios."]
-
-Verifica ademas que el informe respete la accion recomendada de los datos (si un producto dice NO COMPRAR AHORA, el informe no debe sugerirle compra) y que las cifras del informe coincidan con los datos calculados.
-"""
-
-MERGE_CODE_JS = r"""const original = $('Agente IA Gestor de Inventarios').first().json.output;
-const revision = $json.output;
-const noAprobado = /REQUIERE REVISION/i.test(revision);
-const aviso = noAprobado
-  ? 'ADVERTENCIA: el revisor automatico marco este informe como REQUIERE REVISION. No usarlo para decidir compras sin verificarlo.\n\n'
-  : '';
-return [{ json: { output: aviso + original + '\n\n========================================\n' + revision } }];
-"""
-
-HTML_CODE_JS = r"""const raw = String($input.first().json.output);
-const text = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-  body { font-family: Arial, sans-serif; margin: 40px; color: #222; }
-  h1 { font-size: 22px; border-bottom: 2px solid #333; padding-bottom: 8px; }
-  h2 { font-size: 16px; margin-top: 24px; color: #444; }
-  pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 13px; line-height: 1.6; }
-</style>
-</head>
-<body>
-<pre>${text}</pre>
-</body>
-</html>`;
-
-return [{ json: { html } }];
-"""
+PRUEBA = "informe de 2026-09"
+if "--prueba" in sys.argv:
+    PRUEBA = sys.argv[sys.argv.index("--prueba") + 1]
+MOCK = sys.argv[sys.argv.index("--mock") + 1] if "--mock" in sys.argv else None  # solo para pruebas
+FUENTE = sys.argv[sys.argv.index("--fuente") + 1] if "--fuente" in sys.argv else None  # solo para pruebas: csv, excel, sql o api
+PG_CRED = sys.argv[sys.argv.index("--pg-cred") + 1] if "--pg-cred" in sys.argv else None  # id de una credencial de PostgreSQL ya creada en n8n
+API_BASE = sys.argv[sys.argv.index("--api-base") + 1] if "--api-base" in sys.argv else None  # solo para pruebas: URL base de inventarios_js/mock_api.js
 
 ANTHROPIC_CREDENTIAL = {"id": "TinZ1eTTiTSbGGTS", "name": "Anthropic account"}
+CFG = "$('Configuracion').first().json.cfg"
+
+
+def codigo(archivo, *libs):
+    fuente = (JS / archivo).read_text(encoding="utf-8")
+    if FUENTE and archivo == "10_config.js":
+        fuente = fuente.replace("fuente: 'csv',", f"fuente: '{FUENTE}',", 1)
+    if API_BASE and archivo == "10_config.js":
+        fuente = (fuente.replace("api_url_movimientos: '',", f"api_url_movimientos: '{API_BASE}/movimientos',", 1)
+                  .replace("api_url_productos: '',", f"api_url_productos: '{API_BASE}/productos',", 1)
+                  .replace("api_ruta_datos: '',", "api_ruta_datos: 'data',", 1))
+    return "\n".join(libs) + "\n" + fuente
+
+
+def nodo_code(nombre, archivo, x, y, nid, *libs):
+    return {"parameters": {"jsCode": codigo(archivo, *libs)}, "id": nid, "name": nombre,
+            "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [x, y]}
+
+
+def leer_archivo(nombre, campo, x, y, nid, una_vez=False, tolerante=False):
+    n = {"parameters": {"operation": "read", "fileSelector": f"={{{{ {CFG}.{campo} }}}}", "options": {}},
+         "id": nid, "name": nombre, "type": "n8n-nodes-base.readWriteFile", "typeVersion": 1, "position": [x, y]}
+    if una_vez:
+        n["executeOnce"] = True
+    if tolerante:
+        n["onError"] = "continueRegularOutput"
+    return n
+
+
+def extraer(nombre, formato, hoja, x, y, nid, tolerante=False):
+    opciones = {"delimiter": f"={{{{ {CFG}.separador }}}}"} if formato == "csv" else {"sheetName": f"={{{{ {CFG}.{hoja} }}}}"}
+    n = {"parameters": {"operation": formato, "binaryPropertyName": "data", "options": opciones},
+         "id": nid, "name": nombre, "type": "n8n-nodes-base.extractFromFile", "typeVersion": 1.1, "position": [x, y]}
+    if tolerante:
+        n["onError"] = "continueRegularOutput"
+    return n
+
+
+def sql(nombre, campo, x, y, nid, una_vez=False, tolerante=False):
+    n = {"parameters": {"operation": "executeQuery", "query": f"={{{{ {CFG}.{campo} }}}}", "options": {}},
+         "id": nid, "name": nombre, "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [x, y]}
+    if PG_CRED:
+        n["credentials"] = {"postgres": {"id": PG_CRED, "name": "Postgres inventario"}}
+    if una_vez:
+        n["executeOnce"] = True
+    if tolerante:
+        n["onError"] = "continueRegularOutput"
+    return n
+
+
+def api(nombre, campo, x, y, nid, una_vez=False, tolerante=False):
+    n = {"parameters": {"method": "GET", "url": f"={{{{ {CFG}.{campo} }}}}", "options": {}},
+         "id": nid, "name": nombre, "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [x, y]}
+    if una_vez:
+        n["executeOnce"] = True
+    if tolerante:
+        n["onError"] = "continueRegularOutput"
+    return n
+
+
+def regla(valor):
+    return {"conditions": {"options": {"caseSensitive": True, "leftValue": "", "typeValidation": "strict"},
+                           "conditions": [{"id": f"fuente-{valor}", "leftValue": "={{ $json.cfg.fuente }}", "rightValue": valor,
+                                           "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"},
+            "renameOutput": True, "outputKey": valor}
+
+
+def si_booleano(nombre, expresion, x, y, nid):
+    return {"parameters": {"conditions": {"options": {"caseSensitive": True, "leftValue": "", "typeValidation": "strict"},
+                                          "conditions": [{"id": nid + "-c", "leftValue": expresion, "rightValue": "",
+                                                          "operator": {"type": "boolean", "operation": "true", "singleValue": True}}],
+                                          "combinator": "and"}, "options": {}},
+            "id": nid, "name": nombre, "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [x, y]}
+
+
+def claude(x, y):
+    auth = {"authentication": "none"} if MOCK else {"authentication": "predefinedCredentialType", "nodeCredentialType": "anthropicApi"}
+    n = {"parameters": {"method": "POST", "url": (MOCK + "/v1/messages") if MOCK else "https://api.anthropic.com/v1/messages", **auth,
+                        "sendHeaders": True, "headerParameters": {"parameters": [{"name": "anthropic-version", "value": "2023-06-01"}, {"name": "content-type", "value": "application/json"}]},
+                        "sendBody": True, "specifyBody": "json", "jsonBody": "={{ JSON.stringify($('Calcular inventario').first().json.claude_body) }}", "options": {"timeout": 90000}},
+         "credentials": {"anthropicApi": ANTHROPIC_CREDENTIAL}, "retryOnFail": True, "maxTries": 2, "waitBetweenTries": 3000,
+         "onError": "continueRegularOutput", "id": "n-claude", "name": "Claude: comentario", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [x, y]}
+    if MOCK:
+        del n["credentials"]
+    return n
+
+
+nodos = [
+    {"parameters": {"rule": {"interval": [{"field": "months", "monthsInterval": 1, "triggerAtDayOfMonth": 1, "triggerAtHour": 8, "triggerAtMinute": 0}]}},
+     "id": "schedule-mensual", "name": "Disparador mensual", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [0, -200]},
+    {"parameters": {"options": {}}, "id": "chat-inventario", "name": "Chat de inventario", "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+     "typeVersion": 1.1, "position": [0, 0], "webhookId": "gestor-inventarios-chat-test"},
+    {"parameters": {}, "id": "prueba-manual", "name": "Prueba manual", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [0, 200]},
+    {"parameters": {"jsCode": "return [{ json: { chatInput: " + json.dumps(PRUEBA, ensure_ascii=False) + " } }];"},
+     "id": "entrada-prueba", "name": "Entrada de prueba", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [220, 200]},
+    nodo_code("Configuracion", "10_config.js", 440, 0, "n-config", LIB),
+    {"parameters": {"rules": {"values": [regla("csv"), regla("excel"), regla("sql"), regla("api")]}, "options": {}},
+     "id": "n-fuente", "name": "Elegir fuente", "type": "n8n-nodes-base.switch", "typeVersion": 3.2, "position": [660, 0]},
+    # CSV
+    leer_archivo("Leer CSV de movimientos", "archivo_movimientos", 900, -300, "n-csv-1"),
+    extraer("Extraer CSV de movimientos", "csv", None, 1120, -300, "n-csv-2"),
+    leer_archivo("Leer CSV de productos", "archivo_productos", 1340, -300, "n-csv-3", una_vez=True, tolerante=True),
+    extraer("Extraer CSV de productos", "csv", None, 1560, -300, "n-csv-4", tolerante=True),
+    # Excel
+    leer_archivo("Leer Excel de movimientos", "archivo_excel", 900, -100, "n-xls-1"),
+    extraer("Extraer Excel de movimientos", "xlsx", "hoja_movimientos", 1120, -100, "n-xls-2"),
+    leer_archivo("Leer Excel de productos", "archivo_excel", 1340, -100, "n-xls-3", una_vez=True, tolerante=True),
+    extraer("Extraer Excel de productos", "xlsx", "hoja_productos", 1560, -100, "n-xls-4", tolerante=True),
+    # SQL
+    sql("SQL de movimientos", "sql_movimientos", 900, 100, "n-sql-1"),
+    sql("SQL de productos", "sql_productos", 1120, 100, "n-sql-2", una_vez=True, tolerante=True),
+    # API de un programa
+    api("API de movimientos", "api_url_movimientos", 900, 300, "n-api-1"),
+    api("API de productos", "api_url_productos", 1120, 300, "n-api-2", una_vez=True, tolerante=True),
+    nodo_code("Calcular inventario", "20_calcular.js", 1800, 0, "n-calcular", LIB, MOTOR, INFORME),
+    si_booleano("Hay error", "={{ $json.error }}", 2020, 0, "n-if-error"),
+    {"parameters": {"jsCode": "return [{ json: { output: 'No se pudo generar el informe de inventario: ' + $json.mensaje } }];"},
+     "id": "n-error", "name": "Respuesta de error", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2240, -160]},
+    si_booleano("Usar IA", "={{ $json.cfg.usar_ia }}", 2240, 80, "n-if-ia"),
+    claude(2460, -20),
+    nodo_code("Armar informe", "30_armar.js", 2680, 80, "n-armar", LIB, INFORME),
+    {"parameters": {"operation": "write", "fileName": "={{ $json.ruta }}", "dataPropertyName": "data", "options": {}}, "onError": "continueRegularOutput",
+     "id": "n-guardar", "name": "Guardar archivos", "type": "n8n-nodes-base.readWriteFile", "typeVersion": 1, "position": [2900, 80]},
+    {"parameters": {"jsCode": "return [{ json: { output: $('Armar informe').first().json.output } }];"},
+     "id": "n-respuesta", "name": "Respuesta al chat", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [3120, 80]},
+]
+
+enlaces = [
+    ("Disparador mensual", "Configuracion"), ("Chat de inventario", "Configuracion"), ("Prueba manual", "Entrada de prueba"), ("Entrada de prueba", "Configuracion"),
+    ("Configuracion", "Elegir fuente"),
+    ("Leer CSV de movimientos", "Extraer CSV de movimientos"), ("Extraer CSV de movimientos", "Leer CSV de productos"), ("Leer CSV de productos", "Extraer CSV de productos"), ("Extraer CSV de productos", "Calcular inventario"),
+    ("Leer Excel de movimientos", "Extraer Excel de movimientos"), ("Extraer Excel de movimientos", "Leer Excel de productos"), ("Leer Excel de productos", "Extraer Excel de productos"), ("Extraer Excel de productos", "Calcular inventario"),
+    ("SQL de movimientos", "SQL de productos"), ("SQL de productos", "Calcular inventario"),
+    ("API de movimientos", "API de productos"), ("API de productos", "Calcular inventario"),
+    ("Calcular inventario", "Hay error"),
+    ("Claude: comentario", "Armar informe"),
+    ("Armar informe", "Guardar archivos"), ("Guardar archivos", "Respuesta al chat"),
+]
+conexiones = {}
+for o, d in enlaces:
+    conexiones.setdefault(o, {"main": [[]]})["main"][0].append({"node": d, "type": "main", "index": 0})
+# El Switch tiene una salida por fuente; los IF tienen salida 0 = verdadero y 1 = falso
+conexiones["Elegir fuente"] = {"main": [[{"node": "Leer CSV de movimientos", "type": "main", "index": 0}], [{"node": "Leer Excel de movimientos", "type": "main", "index": 0}],
+                                        [{"node": "SQL de movimientos", "type": "main", "index": 0}], [{"node": "API de movimientos", "type": "main", "index": 0}]]}
+conexiones["Hay error"] = {"main": [[{"node": "Respuesta de error", "type": "main", "index": 0}], [{"node": "Usar IA", "type": "main", "index": 0}]]}
+conexiones["Usar IA"] = {"main": [[{"node": "Claude: comentario", "type": "main", "index": 0}], [{"node": "Armar informe", "type": "main", "index": 0}]]}
 
 workflow = {
     "name": "Agente Gestor de Inventarios",
-    "nodes": [
-        {
-            "parameters": {
-                "rule": {
-                    "interval": [
-                        {"field": "months", "monthsInterval": 1, "triggerAtDayOfMonth": 1, "triggerAtHour": 8, "triggerAtMinute": 0}
-                    ]
-                }
-            },
-            "id": "schedule-mensual",
-            "name": "Disparador Mensual",
-            "type": "n8n-nodes-base.scheduleTrigger",
-            "typeVersion": 1.2,
-            "position": [240, -160],
-        },
-        {
-            "parameters": {"options": {}},
-            "id": "chat-trigger-test",
-            "name": "Chat de Prueba",
-            "type": "@n8n/n8n-nodes-langchain.chatTrigger",
-            "typeVersion": 1.1,
-            "position": [240, 64],
-            "webhookId": "gestor-inventarios-chat-test",
-        },
-        {
-            "parameters": {
-                "operation": "read",
-                "fileSelector": CSV_PATH,
-                "options": {},
-            },
-            "id": "leer-csv",
-            "name": "Leer Historial CSV",
-            "type": "n8n-nodes-base.readWriteFile",
-            "typeVersion": 1,
-            "position": [512, -48],
-        },
-        {
-            "parameters": {
-                "operation": "fromCsv",
-                "options": {},
-            },
-            "id": "extraer-csv",
-            "name": "Extraer Datos CSV",
-            "type": "n8n-nodes-base.extractFromFile",
-            "typeVersion": 1,
-            "position": [736, -48],
-        },
-        {
-            "parameters": {"jsCode": CODE_JS},
-            "id": "calcular-rotacion",
-            "name": "Calcular Rotacion y Recomendaciones",
-            "type": "n8n-nodes-base.code",
-            "typeVersion": 2,
-            "position": [960, -48],
-        },
-        {
-            "parameters": {
-                "promptType": "define",
-                "text": "=Fecha actual: {{ $now.toFormat('yyyy-MM-dd') }}\n\nAnaliza estos datos de inventario y genera el informe mensual:\n\n{{ JSON.stringify($json) }}",
-                "options": {"systemMessage": SYSTEM_PROMPT},
-            },
-            "retryOnFail": True,
-            "maxTries": 2,
-            "waitBetweenTries": 3000,
-            "id": "agente-inventarios",
-            "name": "Agente IA Gestor de Inventarios",
-            "type": "@n8n/n8n-nodes-langchain.agent",
-            "typeVersion": 2,
-            "position": [1184, -48],
-        },
-        {
-            "parameters": {
-                "model": {
-                    "__rl": True,
-                    "mode": "list",
-                    "value": "claude-sonnet-4-6",
-                    "cachedResultName": "Claude Sonnet 4.6",
-                },
-                "options": {},
-            },
-            "id": "llm-inventarios",
-            "name": "Claude (Gestor Inventarios)",
-            "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-            "typeVersion": 1.3,
-            "position": [1184, 128],
-            "credentials": {"anthropicApi": ANTHROPIC_CREDENTIAL},
-        },
-        {
-            "parameters": {
-                "promptType": "define",
-                "text": "=Fecha actual: {{ $now.toFormat('yyyy-MM-dd') }}\n\nDATOS CALCULADOS QUE SUSTENTAN EL INFORME:\n{{ JSON.stringify($('Calcular Rotacion y Recomendaciones').first().json) }}\n\nINFORME A REVISAR:\n{{ $json.output }}",
-                "options": {"systemMessage": REVIEWER_SYSTEM_PROMPT},
-            },
-            "retryOnFail": True,
-            "maxTries": 2,
-            "waitBetweenTries": 3000,
-            "id": "agente-revisor-inventarios",
-            "name": "Agente Revisor Inventarios",
-            "type": "@n8n/n8n-nodes-langchain.agent",
-            "typeVersion": 2,
-            "position": [1408, -48],
-        },
-        {
-            "parameters": {
-                "model": {
-                    "__rl": True,
-                    "mode": "list",
-                    "value": "claude-sonnet-4-6",
-                    "cachedResultName": "Claude Sonnet 4.6",
-                },
-                "options": {},
-            },
-            "id": "llm-revisor-inventarios",
-            "name": "Claude (Revisor Inventarios)",
-            "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-            "typeVersion": 1.3,
-            "position": [1408, 128],
-            "credentials": {"anthropicApi": ANTHROPIC_CREDENTIAL},
-        },
-        {
-            "parameters": {"jsCode": MERGE_CODE_JS},
-            "id": "combinar-informe-revision",
-            "name": "Combinar Informe y Revision",
-            "type": "n8n-nodes-base.code",
-            "typeVersion": 2,
-            "position": [1632, -48],
-        },
-        {
-            "parameters": {"jsCode": HTML_CODE_JS},
-            "id": "html-wrap",
-            "name": "Code in JavaScript",
-            "type": "n8n-nodes-base.code",
-            "typeVersion": 2,
-            "position": [1856, -48],
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "https://api.pdfshift.io/v3/convert/pdf",
-                "authentication": "genericCredentialType",
-                "genericAuthType": "httpHeaderAuth",
-                "sendBody": True,
-                "bodyParameters": {
-                    "parameters": [{"name": "source", "value": "={{ $json.html }}"}]
-                },
-                "options": {},
-            },
-            "retryOnFail": True,
-            "maxTries": 3,
-            "waitBetweenTries": 2000,
-            "id": "pdfshift-request",
-            "name": "Generar PDF del Informe",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.4,
-            "position": [2080, -48],
-        },
-    ],
-    "connections": {
-        "Disparador Mensual": {"main": [[{"node": "Leer Historial CSV", "type": "main", "index": 0}]]},
-        "Chat de Prueba": {"main": [[{"node": "Leer Historial CSV", "type": "main", "index": 0}]]},
-        "Leer Historial CSV": {"main": [[{"node": "Extraer Datos CSV", "type": "main", "index": 0}]]},
-        "Extraer Datos CSV": {"main": [[{"node": "Calcular Rotacion y Recomendaciones", "type": "main", "index": 0}]]},
-        "Calcular Rotacion y Recomendaciones": {"main": [[{"node": "Agente IA Gestor de Inventarios", "type": "main", "index": 0}]]},
-        "Claude (Gestor Inventarios)": {"ai_languageModel": [[{"node": "Agente IA Gestor de Inventarios", "type": "ai_languageModel", "index": 0}]]},
-        "Agente IA Gestor de Inventarios": {"main": [[{"node": "Agente Revisor Inventarios", "type": "main", "index": 0}]]},
-        "Claude (Revisor Inventarios)": {"ai_languageModel": [[{"node": "Agente Revisor Inventarios", "type": "ai_languageModel", "index": 0}]]},
-        "Agente Revisor Inventarios": {"main": [[{"node": "Combinar Informe y Revision", "type": "main", "index": 0}]]},
-        "Combinar Informe y Revision": {"main": [[{"node": "Code in JavaScript", "type": "main", "index": 0}]]},
-        "Code in JavaScript": {"main": [[{"node": "Generar PDF del Informe", "type": "main", "index": 0}]]},
-    },
-    "settings": {"executionOrder": "v1", "timezone": "America/Bogota"},
+    "nodes": nodos,
+    "connections": conexiones,
+    "pinData": {},
     "active": False,
+    "settings": {"executionOrder": "v1", "timezone": "America/Bogota", "executionTimeout": 900, "binaryMode": "separate", "availableInMCP": False},
     "id": "Be8j3flihDvE2tMl",
+    "tags": [],
 }
 
-OUT = r"C:\Users\monca\Documents\Proyectos\Trabajo de grados\n8n_agentes\agente_gestor_inventarios.json"
-with open(OUT, "w", encoding="utf-8") as f:
+salida = BASE / "agente_gestor_inventarios.json"
+with open(salida, "w", encoding="utf-8") as f:
     json.dump(workflow, f, ensure_ascii=False, indent=2)
-print("OK:", OUT)
+print("OK:", salida, "| nodos:", len(nodos), "| prueba:", PRUEBA)

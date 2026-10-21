@@ -6,7 +6,8 @@ Proyecto de grado de Ingeniería Industrial. Este repositorio contiene solo el c
 
 | Ruta | Contenido |
 |---|---|
-| `n8n_agentes/build_agente_inventarios.py` | Genera el workflow "Agente Gestor de Inventarios" (rotación, punto de reorden, clasificación ABC, informe mensual). |
+| `n8n_agentes/build_agente_inventarios.py` | Genera el workflow "Agente Gestor de Inventarios". |
+| `n8n_agentes/inventarios_js/` | Código del agente de inventarios: lectura de datos de CSV, Excel, SQL o API, motor de cálculo, generador del informe y pruebas. Ver `GUIA_CONEXION.md`. |
 | `n8n_agentes/build_agente_proveedores.py` | Genera el workflow "Agente Cotizador de Proveedores" (búsqueda y comparación de proveedores). |
 | `n8n_agentes/busqueda_js/` | Código de los nodos del agente de proveedores (búsqueda rápida y profunda). `00_lib.js` es la biblioteca común, `01` a `09` son los nodos, `test_local.js` los prueba sin n8n, `test_logica.js` y `test_seguridad.js` son pruebas automáticas y `mock_claude.js` simula la API de Claude para probar sin gastar. |
 | `n8n_agentes/*.json` | Workflows ya generados, listos para importar en n8n. |
@@ -32,6 +33,10 @@ docker run -d --name searxng --restart unless-stopped -p 127.0.0.1:8888:8080 -v 
 ```
 
 Consulta de prueba: `http://127.0.0.1:8888/search?q=harina+de+trigo&format=json`
+
+## Qué devuelve el agente de inventarios
+
+Se conecta a un sistema de inventario por CSV, Excel, SQL (PostgreSQL, MySQL o SQL Server) o API, analiza los movimientos del mes y entrega un informe con: qué surtir y cuánta cantidad (urgente o para el próximo ciclo), qué productos se quedaron en cero (desde cuándo y por cuánto tiempo), qué tanto se movió cada uno frente a los tres meses anteriores, qué no se ha movido o nunca se movió, qué está en sobrestock y los indicadores del mes (rotación, quiebre, capital inmovilizado, exactitud del pronóstico). Todo el cálculo es código determinista; Claude solo redacta un comentario corto y es opcional. También genera un CSV de pedido sugerido listo para Excel. Las cuatro fuentes se probaron con los mismos datos de ejemplo y dan el mismo resultado. Guía de conexión en `n8n_agentes/inventarios_js/GUIA_CONEXION.md`; todavía no se ha validado con datos reales de una empresa.
 
 ## Qué devuelve el agente de proveedores
 

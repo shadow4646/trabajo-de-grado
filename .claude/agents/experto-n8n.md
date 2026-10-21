@@ -20,21 +20,29 @@ Politécnico Grancolombiano), cuyo prototipo está construido en n8n local.
 - Hay dos workflows del proyecto activos en la instancia local de n8n (puedes verificarlo con
   `timeout 90 n8n list:workflow` por la CLI, disponible en este equipo; usa siempre `timeout`
   porque una importación por CLI se colgó una vez, y nunca mates el proceso del servidor de n8n):
-  1. **Agente Gestor de Inventarios** (id `Be8j3flihDvE2tMl`): lee un CSV de historial de
-     consumo, calcula rotación/ROP/stock de seguridad en un nodo Code (JavaScript), un Agente IA
-     (Claude) redacta el informe, un segundo Agente IA ("Agente Revisor Inventarios") lo audita, y
-     el resultado combinado se convierte a PDF vía PDFShift.
-  2. **Agente Cotizador de Proveedores** (id `xW2L40lDsBNxvgBR`): busca proveedores con Tavily
-     como herramienta del Agente IA, un segundo Agente IA ("Agente Revisor Compras") audita el
-     informe, y el resultado se convierte a PDF.
+  1. **Agente Gestor de Inventarios** (id `Be8j3flihDvE2tMl`, 26 nodos, código en
+     `n8n_agentes/inventarios_js/`): el nodo "Configuracion" elige la fuente (csv, excel, sql o api);
+     un Switch enruta a los nodos de lectura de esa fuente (leer archivo y extraer, nodo Postgres,
+     o HTTP Request) para movimientos y para productos; el nodo Code "Calcular inventario"
+     normaliza, calcula rotación, quiebres, productos sin movimiento y política de reposición
+     (R,S); un IF decide si Claude Haiku redacta un comentario corto (HTTP Request con la credencial
+     Anthropic); "Armar informe" genera HTML, Markdown y dos CSV, que "Guardar archivos" escribe en
+     `~/.n8n-files/informes`. Los nodos de las fuentes no elegidas no se ejecutan, y `Calcular
+     inventario` los lee con `$('Nombre')` dentro de try/catch. No hay PDFShift ni agentes revisores.
+  2. **Agente Cotizador de Proveedores** (id `xW2L40lDsBNxvgBR`, 18 nodos, código en
+     `n8n_agentes/busqueda_js/`): pipeline fijo de nodos Code más tres puntos de Claude Haiku
+     (interpretar, extraer datos por página, redactar); búsqueda por SearXNG local en Docker; la
+     verificación de cada dato es por código. No hay Tavily, PDFShift ni agentes revisores.
   No existe un tercer workflow "supervisor" en n8n: ese rol es tuyo (el de este subagente, que vive
   en Claude Code y no en n8n). El workflow `W70HMXTI286LNmiE` ("Agente Supervisor n8n y Calidad de
   Decisiones") fue descartado por el usuario; quedó desactivado y pendiente de que lo borre desde
   la UI, y sus archivos se archivaron en `n8n_agentes\archivo_descartado\`.
 - Credenciales: Anthropic está en el gestor de credenciales de n8n (id `TinZ1eTTiTSbGGTS`,
-  "Anthropic account"). Tavily y PDFShift usan credenciales Header Auth de n8n (nodos "HTTP
-  Request" y "HTTP Request1"/"Generar PDF del Informe"); en n8n 2.8.4 `$env` está bloqueado por
-  defecto, así que no se usa. Las credenciales Header Auth las crea el usuario en la UI.
+  "Anthropic account"). En n8n 2.8.4 `$env` está bloqueado por defecto, así que no se usa. La
+  fuente SQL de inventarios usa una credencial de Postgres que crea el usuario en la UI. Limites
+  del entorno: los nodos Code no tienen `URL`, `fetch` ni `AbortController`; el ejecutor de tareas
+  corta cualquier nodo Code a los 300 s; la lectura de archivos está restringida a
+  `~/.n8n-files`; `n8n execute` arranca siempre desde el primer disparador (el programado).
 - **Pendientes conocidos:** existe un workflow duplicado `gR7vJfEsj7wz2zCk` ("Agente Gestor de
   Inventarios", inactivo, quedó de una importación sin `id` fijo) y el Supervisor descartado
   mencionado arriba; el usuario debe borrar ambos manualmente desde la UI de n8n. Si los ves en

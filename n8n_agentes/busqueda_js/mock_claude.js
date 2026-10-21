@@ -66,6 +66,7 @@ http.createServer((req, res) => {
       if (sistema.includes('prepara el plan de busqueda web') || sistema.includes('preparar el plan de busqueda')) texto = JSON.stringify(interpretar());
       else if (sistema.includes('Extraes datos de proveedores')) texto = JSON.stringify(extraer(usuario));
       else if (sistema.includes('redacta la parte narrativa')) texto = narrativa(usuario);
+      else if (sistema.includes('comentario de un informe mensual')) texto = '## Comentario del analista\nAtiende primero los productos urgentes y los que siguen en cero. (texto simulado)';
       else texto = 'ok';
     } catch (e) { texto = 'error: ' + e.message; }
     res.writeHead(200, { 'content-type': 'application/json' });

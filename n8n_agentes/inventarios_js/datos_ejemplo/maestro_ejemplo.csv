@@ -1,0 +1,25 @@
+sku,producto,unidad,stock_actual,costo_unitario,lead_time_dias,moq,en_transito,proveedor
+TOR-M6-20,Tornillo M6x20 (caja x100),caja,316,8.00,15,10,0,Proveedor TOR
+LAM-AC-2MM,Lamina acero 2 mm,unidad,0,22.50,30,20,40,Proveedor LAM
+MOT-1HP,Motor electrico 1 HP,unidad,0,180.00,45,1,0,Proveedor MOT
+EMP-CAJ-30,Caja de carton 30x30,unidad,3057,0.60,7,500,0,Proveedor EMP
+ACE-HID-20L,Aceite hidraulico 20 L,unidad,14,95.00,20,2,0,Proveedor ACE
+SEL-MEC-A,Sello mecanico tipo A,unidad,7,40.00,25,1,0,Proveedor SEL
+LIJ-80,Lija grano 80,unidad,2522,1.20,10,100,0,Proveedor LIJ
+VAL-BOL-1,Valvula de bola 1 pulgada,unidad,50,15.00,20,5,0,Proveedor VAL
+FIL-AIR-X,Filtro de aire X,unidad,19,30.00,12,5,0,Proveedor FIL
+GUA-NIT-100,Guantes de nitrilo (caja x100),caja,32,12.00,10,10,0,Proveedor GUA
+PIN-ESM-BL,Pintura esmalte blanca 1 galon,galon,118,28.00,14,6,0,Proveedor PIN
+TUB-PVC-2,Tubo PVC 2 pulgadas,unidad,332,9.00,10,50,200,Proveedor TUB
+CAB-12AWG,Cable 12 AWG (rollo),rollo,13,55.00,18,5,0,Proveedor CAB
+BOM-SUM-3,Bomba sumergible 3 HP,unidad,1,320.00,40,1,0,Proveedor BOM
+GRA-MULT,Grasa multiproposito,unidad,165,6.00,8,24,0,Proveedor GRA
+ROD-6204,Rodamiento 6204,unidad,147,7.00,9,20,0,Proveedor ROD
+CAS-AMA,Casco de seguridad amarillo,unidad,8,9.00,15,12,0,Proveedor CAS
+PER-M8,Perno M8 (caja x50),caja,174,6.50,12,10,0,Proveedor PER
+DIS-CORTE,Disco de corte 4.5 pulgadas,unidad,594,2.80,7,50,0,Proveedor DIS
+SOL-6013,Soldadura 6013 (kg),kg,142,3.90,10,25,0,Proveedor SOL
+BAT-12V,Bateria 12 V,unidad,3,85.00,20,1,0,Proveedor BAT
+MAN-HID-12,Manguera hidraulica 1/2 pulgada,metro,23,18.00,25,10,0,Proveedor MAN
+TIN-GAL,Tinner galon,galon,38,8.00,7,12,0,Proveedor TIN
+ETI-ADH-R,Etiqueta adhesiva rollo,rollo,500,3.00,10,20,0,Proveedor ETI
