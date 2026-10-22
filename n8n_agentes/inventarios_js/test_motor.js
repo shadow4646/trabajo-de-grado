@@ -27,6 +27,8 @@ ok('numero latino', M.parsearNumero('1.234,56') === 1234.56);
 ok('numero ingles', M.parsearNumero('1,234.56') === 1234.56);
 ok('numero miles', M.parsearNumero('1.200') === 1200);
 ok('numero texto', Number.isNaN(M.parsearNumero('abc')));
+ok('hexadecimal no es cantidad', Number.isNaN(M.parsearNumero('0x10')) && Number.isNaN(M.parsearNumero('0b11')) && Number.isNaN(M.parsearNumero('Infinity')));
+ok('notacion cientifica si', M.parsearNumero('1e3') === 1000);
 const tipos = { VENTA: 'salida', COMPRA: 'entrada', 'DEVOLUCION VENTA': 'devolucion_cliente', 'Devolucion a proveedor': 'devolucion_proveedor', 'AJUSTE NEGATIVO': 'ajuste_neg', 'AJUSTE POSITIVO': 'ajuste_pos', 'SALDO INICIAL': 'saldo_inicial', 'Traslado entrada': 'traslado_entrada', 'merma por vencimiento': 'ajuste_neg', xyz: 'desconocido' };
 Object.entries(tipos).forEach(([t, e]) => ok(`tipo ${t}`, M.clasificarTipo(t, 1) === e, M.clasificarTipo(t, 1)));
 const cols = M.detectarColumnas(['Código', 'Fecha movimiento', 'Descripción', 'Tipo de movimiento', 'Cantidad', 'Costo'], {}, ['sku', 'fecha', 'producto', 'tipo', 'cantidad', 'costo_unitario']);

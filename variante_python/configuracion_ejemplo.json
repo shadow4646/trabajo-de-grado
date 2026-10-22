@@ -1,0 +1,11 @@
+{
+  "fuente": "csv",
+  "archivo_movimientos": "../n8n_agentes/inventarios_js/datos_ejemplo/movimientos_ejemplo.csv",
+  "archivo_productos": "../n8n_agentes/inventarios_js/datos_ejemplo/maestro_ejemplo.csv",
+  "separador": ",",
+  "formato_fecha": "DMY",
+  "moneda": "$",
+  "parametros": { "sector": "general", "R_dias": 30, "lead_time_defecto": 15 },
+  "proveedor_lenguaje": "ninguno",
+  "carpeta_salida": "informes"
+}

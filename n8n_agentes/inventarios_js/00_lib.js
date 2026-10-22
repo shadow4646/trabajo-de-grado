@@ -89,7 +89,8 @@ function parsearNumero(v) {
   if (punto >= 0 && coma >= 0) s = punto > coma ? s.replace(/,/g, '') : s.replace(/\./g, '').replace(',', '.');
   else if (coma >= 0) s = /,\d{1,2}$/.test(s) && (s.match(/,/g) || []).length === 1 ? s.replace(',', '.') : s.replace(/,/g, '');
   else if (punto >= 0 && /^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
-  const n = Number(s);
+  // Number("0x10") da 16 y Number("0b11") da 3: solo se aceptan numeros decimales normales (el motor de Python hace lo mismo)
+  const n = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s) ? Number(s) : NaN;
   return Number.isFinite(n) ? (neg ? -n : n) : NaN;
 }
 

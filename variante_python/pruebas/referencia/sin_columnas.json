@@ -1,0 +1,1 @@
+{"caso":"sin_columnas","mes":"2026-09","error":"No se reconocieron las columnas minimas de movimientos (fecha, sku y cantidad). Columnas recibidas: Mes, Ref, Mov. Indica el mapeo en la configuracion."}

@@ -28,3 +28,6 @@ n8n_agentes/inventarios_js/_prueba_*
 
 # Figuras de la tesis (entrega, no se suben)
 /figuras_tesis/
+
+# Salidas locales de la variante de Python
+variante_python/informes/

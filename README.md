@@ -6,6 +6,7 @@ Proyecto de grado de Ingeniería Industrial. Este repositorio contiene solo el c
 
 | Ruta | Contenido |
 |---|---|
+| `variante_python/` | Variante A: el agente de inventarios portado a Python, sin n8n, con pruebas de equivalencia contra el prototipo. Ver `variante_python/README.md`. |
 | `n8n_agentes/build_agente_inventarios.py` | Genera el workflow "Agente Gestor de Inventarios". |
 | `n8n_agentes/inventarios_js/` | Código del agente de inventarios: lectura de datos de CSV, Excel, SQL o API, motor de cálculo, generador del informe y pruebas. Ver `GUIA_CONEXION.md`. |
 | `n8n_agentes/build_agente_proveedores.py` | Genera el workflow "Agente Cotizador de Proveedores" (búsqueda y comparación de proveedores). |
@@ -24,12 +25,12 @@ El motor de cálculo y verificación de los dos agentes es independiente de la p
 | Capa | Opción | Estado |
 |---|---|---|
 | Orquestación | Variante B: n8n (lo que contiene este repositorio) | Construida y probada |
-| Orquestación | Variante A: paquete de Python autónomo, sin n8n | Diseñada, por construir |
+| Orquestación | Variante A: paquete de Python autónomo, sin n8n (carpeta `variante_python/`) | Agente de inventarios portado y verificado contra el prototipo; agente de proveedores por portar |
 | Proveedor de lenguaje | Claude Haiku 4.5 por API | Probado en corridas reales |
-| Proveedor de lenguaje | Modelo local con Ollama | Diseñado, no probado |
+| Proveedor de lenguaje | Modelo local con Ollama | Implementado en la variante de Python y probado solo con un servidor simulado, no con un Ollama real |
 | Proveedor de lenguaje | Ninguno (agente de inventarios con `usar_ia: false`) | El motor se prueba sin IA |
 
-Hoy el nombre del modelo y la dirección del servicio son constantes en `00_lib.js` de cada agente; parametrizarlos para cambiar de proveedor es parte del trabajo pendiente.
+En el prototipo con n8n el nombre del modelo y la dirección del servicio son constantes en `00_lib.js` de cada agente; en la variante de Python son configurables.
 
 ## Cómo usar los workflows de n8n
 

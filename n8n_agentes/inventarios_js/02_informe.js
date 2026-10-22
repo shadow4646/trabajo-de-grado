@@ -11,6 +11,26 @@ Reglas estrictas:
 - Cubre: que atender primero y por que, el riesgo principal (quiebres o capital inmovilizado) y una advertencia sobre la confiabilidad de los datos si el JSON la trae.
 - No uses guiones largos (el caracter de raya). Usa comas, puntos, dos puntos o parentesis.`;
 
+// Resumen que se le entrega al modelo de lenguaje: conteos, indicadores y las listas mas importantes. Nunca incluye los movimientos.
+function armarEntradaIA(res, ind) {
+  const resultados = res.resultados.map(({ meses, valores, ...r }) => ({ ...r, cobertura: Number.isFinite(r.cobertura) ? r.cobertura : null }));
+  const top = (lista, n, f) => lista.slice(0, n).map(f);
+  const urg = resultados.filter((r) => r.accion === 'COMPRAR URGENTE').sort((a, b) => ((a.cobertura ?? 1e9) - a.L) - ((b.cobertura ?? 1e9) - b.L));
+  return {
+    mes: res.ym,
+    productos: ind.productos,
+    productos_por_accion: ind.cuenta_acciones,
+    indicadores: {
+      valor_inventario: Math.round(ind.valor_inventario), compra_sugerida: Math.round(ind.compra_total), capital_inmovilizado_stock_muerto: Math.round(ind.valor_muerto),
+      capital_en_exceso: Math.round(ind.capital_exceso), rotacion_anual: ind.rotacion_anual ? Math.round(ind.rotacion_anual * 10) / 10 : null, productos_en_quiebre: ind.productos_en_quiebre,
+    },
+    urgentes: top(urg, 6, (r) => ({ producto: r.nombre || r.sku, stock: Math.round(r.stock), cantidad_sugerida: r.cantidad })),
+    en_cero_este_mes: top(resultados.filter((r) => r.dias_en_cero > 0).sort((a, b) => b.dias_en_cero - a.dias_en_cero), 5, (r) => ({ producto: r.nombre || r.sku, dias_en_cero: r.dias_en_cero, sigue_en_cero: !!(r.quiebre && r.quiebre.sigue) })),
+    sin_rotacion: top(resultados.filter((r) => r.accion === 'SIN MOVIMIENTO' || r.accion === 'NUNCA SE MOVIO').sort((a, b) => b.valor_stock - a.valor_stock), 5, (r) => ({ producto: r.nombre || r.sku, valor: Math.round(r.valor_stock) })),
+    advertencias_de_datos: res.avisos.slice(0, 3),
+  };
+}
+
 const MESES_NOMBRE = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const mesTexto = (ym) => `${MESES_NOMBRE[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
 
@@ -216,8 +236,19 @@ code{background:#f0f0f0;padding:1px 4px}</style></head><body>${mdAHtml(md)}</bod
     return /[;,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const csvDe = (enc, filas) => '﻿' + [enc, ...filas].map((f) => f.map(campo).join(';')).join('\r\n') + '\r\n';
+  // Orden fijo: proveedor (sin tildes ni mayusculas), urgentes primero y luego codigo. El comparador anterior nunca devolvia
+  // empate, asi que el orden dentro de cada proveedor dependia del algoritmo de ordenacion y no era el mismo en otro lenguaje.
+  const ordenPedido = (a, b) => {
+    const pa = norm(a.proveedor || '');
+    const pb = norm(b.proveedor || '');
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    const ua = a.accion === 'COMPRAR URGENTE' ? 0 : 1;
+    const ub = b.accion === 'COMPRAR URGENTE' ? 0 : 1;
+    if (ua !== ub) return ua - ub;
+    return a.sku < b.sku ? -1 : (a.sku > b.sku ? 1 : 0);
+  };
   const csvPedido = csvDe(['sku', 'producto', 'proveedor', 'urgencia', 'cantidad', 'unidad', 'costo_unitario', 'costo_total', 'motivo'],
-    aSurtir.filter((r) => r.cantidad > 0).sort((a, b) => (a.proveedor || '').localeCompare(b.proveedor || '') || (a.accion === 'COMPRAR URGENTE' ? -1 : 1)).map((r) => [r.sku, r.nombre, r.proveedor, r.accion === 'COMPRAR URGENTE' ? 'URGENTE' : 'NORMAL', r.cantidad, r.unidad, r.costo, r.valor_compra, r.motivo]));
+    aSurtir.filter((r) => r.cantidad > 0).sort(ordenPedido).map((r) => [r.sku, r.nombre, r.proveedor, r.accion === 'COMPRAR URGENTE' ? 'URGENTE' : 'NORMAL', r.cantidad, r.unidad, r.costo, r.valor_compra, r.motivo]));
   const csvDetalle = csvDe(['sku', 'producto', 'accion', 'clase_abc', 'clase_xyz', 'patron_demanda', 'confianza', 'stock_al_corte', 'en_transito', 'salidas_mes', 'entradas_mes', 'dias_en_cero_mes', 'ultima_salida', 'dias_sin_salida', 'demanda_mensual_estimada', 'cobertura_dias', 'plazo_dias', 'punto_de_reorden', 'nivel_objetivo', 'cantidad_sugerida', 'costo_unitario', 'valor_stock', 'proveedor', 'motivo'],
     rs.map((r) => [r.sku, r.nombre, r.accion, r.clase, r.xyz || '', r.pron ? r.pron.patron : '', r.confianza, r.stock, r.transito, r.salidas_mes, r.entradas_mes, r.dias_en_cero === null ? '' : r.dias_en_cero, r.ultima_salida === null || r.ultima_salida === undefined ? '' : isoDe(r.ultima_salida), r.dias_sin_salida === null ? '' : r.dias_sin_salida, r.pron ? r.pron.demanda : '', r.cobertura === null || r.cobertura === Infinity ? '' : r.cobertura, r.L, r.rop === undefined ? '' : r.rop, r.S === undefined ? '' : r.S, r.cantidad, r.costo, r.valor_stock, r.proveedor, r.motivo]));
 
