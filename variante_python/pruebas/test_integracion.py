@@ -82,6 +82,30 @@ class Servidor:
         self.httpd.shutdown()
         self.httpd.server_close()
 
+@contextlib.contextmanager
+def servidor_que_redirige(destino, codigo=302):
+    """Servidor local que responde a cualquier GET o POST con una redireccion hacia `destino`."""
+    class Redirige(BaseHTTPRequestHandler):
+        def _redirigir(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(codigo)
+            self.send_header("Location", destino)
+            self.end_headers()
+
+        do_GET = _redirigir
+        do_POST = _redirigir
+
+        def log_message(self, *args):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Redirige)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        yield "http://127.0.0.1:%d" % srv.server_address[1]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
 
 def cfg_base(**cambios):
     return ejecutar.cargar_config(None, {"formato_fecha": "DMY", **cambios})
@@ -183,6 +207,49 @@ class TestConectoresErroresYSeguridad(unittest.TestCase):
         self.assertEqual(filas, [{"a": 1}])
         with self.assertRaises(ErrorFuente):
             conectores.leer_api("file:///etc/passwd")
+
+    def test_api_no_sigue_redirecciones_ni_entrega_el_token_a_otro_servidor(self):
+        # Una API (o un servidor comprometido) que redirige a otra direccion no debe recibir el token: urllib reenviaria el encabezado.
+        with Servidor({"/captura": (200, [{"a": 1}])}) as destino, servidor_que_redirige(destino.url + "/captura") as origen:
+            with self.assertRaises(ErrorFuente) as e:
+                conectores.leer_api(origen + "/x", token="TOKEN-SECRETO-123")
+            self.assertEqual(destino.peticiones, [], "el servidor de destino de la redireccion no recibio ninguna peticion")
+        self.assertIn("redireccion", str(e.exception))
+        self.assertNotIn("TOKEN-SECRETO-123", str(e.exception))
+
+    def test_una_clave_no_viaja_por_http_sin_cifrar(self):
+        with self.assertRaises(ErrorFuente) as e:
+            conectores.leer_api("http://api.ejemplo.test/x", token="TOKEN-SECRETO-123")
+        self.assertIn("https", str(e.exception))
+        os.environ["ANTHROPIC_API_KEY_PRUEBA"] = "CLAVE-FALSA-DE-PRUEBA"
+        try:
+            with self.assertRaises(ErrorLenguaje) as e2:
+                Claude(url="http://modelo.ejemplo.test/v1/messages", clave_env="ANTHROPIC_API_KEY_PRUEBA").comentar("s", "u")
+        finally:
+            del os.environ["ANTHROPIC_API_KEY_PRUEBA"]
+        self.assertIn("https", str(e2.exception))
+        self.assertNotIn("CLAVE-FALSA", str(e2.exception))
+
+    def test_claude_no_sigue_redirecciones_con_la_clave(self):
+        os.environ["ANTHROPIC_API_KEY_PRUEBA"] = "CLAVE-FALSA-DE-PRUEBA"
+        try:
+            with Servidor({"/captura": (200, {})}) as destino, servidor_que_redirige(destino.url + "/captura", 307) as origen:
+                with self.assertRaises(ErrorLenguaje):
+                    Claude(url=origen + "/v1/messages", clave_env="ANTHROPIC_API_KEY_PRUEBA").comentar("s", "u")
+                self.assertEqual(destino.peticiones, [])
+        finally:
+            del os.environ["ANTHROPIC_API_KEY_PRUEBA"]
+
+    def test_neutralizar_formulas(self):
+        from agente_inventarios.informe import neutralizar
+        casos = {
+            "=1+1": "'=1+1", "@SUM(A1)": "'@SUM(A1)", "+cmd|x": "'+cmd|x", "-2+3": "'-2+3", "- 1+1": "'- 1+1", "+ 1+1": "'+ 1+1", "\t- 2+3": "\t'- 2+3",
+            "Tornillo, =1+1": "Tornillo,' =1+1", "Acme; @SUM(A1)": "Acme;' @SUM(A1)", "Item\n=X": "Item\n'=X", "Pieza, - 2+3 mas": "Pieza,' - 2+3 mas",
+            "＝1+1": "'＝1+1", "texto normal": "texto normal", "ref-2026": "ref-2026", "-": "-", "- ": "- ", "a - b": "a - b",
+        }
+        for entrada, esperado in casos.items():
+            with self.subTest(entrada=entrada):
+                self.assertEqual(neutralizar(entrada), esperado)
 
     def test_columnas_no_reconocidas_dan_un_error_claro(self):
         with tempfile.TemporaryDirectory() as d:
@@ -330,7 +397,7 @@ class TestLineaDeComandos(unittest.TestCase):
             for archivo in ("inventario_2026-09_pedido.csv", "inventario_2026-09_detalle.csv"):
                 texto = leer_texto(os.path.join(d, "o", archivo), encoding="utf-8-sig", newline="")
                 celdas = re.split(r"[,;\t\r\n]", texto)
-                peligrosas = [c for c in celdas if re.match(r'^\s*"?\s*[=@+\-]', c) and not re.match(r'^\s*"?-?\d+([.,]\d+)?"?\s*$', c) and c.strip() != "-"]
+                peligrosas = [c for c in celdas if re.match(r'^\s*"?\s*[=@+\-＝＋－＠]', c) and not re.match(r'^\s*"?-?\d+([.,]\d+)?"?\s*$', c) and c.strip() != "-"]
                 self.assertEqual(peligrosas, [], archivo)
             html = leer_texto(os.path.join(d, "o", "inventario_2026-09.html"), encoding="utf-8")
             self.assertFalse(re.search(r"<script|<img|<[a-z][^>]*\son\w+\s*=|href=\"\s*javascript:", html, re.IGNORECASE), "el HTML no debe contener marcado ejecutable")

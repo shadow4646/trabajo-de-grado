@@ -32,7 +32,8 @@ A diferencia del prototipo con n8n, aquí la IA está apagada por defecto. Si el
 
 - Solo lectura: no se escribe nunca en el sistema de inventario. Con SQL se exige una consulta `SELECT` de una sola sentencia y la conexión se abre en solo lectura donde el motor lo permite (SQLite, MySQL y PostgreSQL). Aun así conviene usar un usuario de base de datos con permiso únicamente de lectura.
 - La URL de la base de datos y el token de la API se leen de variables de entorno (`INVENTARIOS_SQL_URL`, `INVENTARIOS_API_TOKEN`), no del archivo de configuración.
-- Los CSV neutralizan fórmulas de Excel (`=`, `+`, `-`, `@`) en cualquier separador posible, y el HTML escapa el texto externo.
+- Las claves (API de datos, Claude) no se filtran: no se siguen redirecciones, porque `urllib` reenvía por defecto la cabecera `Authorization` o `x-api-key` a la dirección nueva (se comprobó), y una clave no viaja por `http` sin cifrar salvo hacia la propia máquina.
+- Los CSV neutralizan fórmulas de Excel en cada fragmento que empiece (tras blancos) con `=` o `@`, o con `+` o `-` seguidos de algo, aunque haya espacios en medio (`- 1+1`), y las variantes de ancho completo, en cualquier separador posible. El HTML escapa el texto externo.
 - A diferencia del prototipo con n8n no hay interfaz web, chat ni puerto abierto.
 
 ## Equivalencia con el prototipo

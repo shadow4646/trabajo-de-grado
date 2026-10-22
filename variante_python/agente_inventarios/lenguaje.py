@@ -9,6 +9,8 @@ import os
 import urllib.error
 import urllib.request
 
+from . import red
+
 MODELO_CLAUDE = "claude-haiku-4-5-20251001"
 PRECIO_MTOK = {"entrada": 1.0, "salida": 5.0}  # USD por millon de tokens; referencia de terceros, no oficial
 
@@ -35,8 +37,11 @@ def _post_json(url, cuerpo, encabezados, timeout):
     datos = json.dumps(cuerpo).encode("utf-8")
     req = urllib.request.Request(url, data=datos, headers={"Content-Type": "application/json", **encabezados}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        red.exigir_https_si_hay_clave(url, "x-api-key" in encabezados)
+        with red.abrir(req, timeout) as r:
             return json.loads(r.read().decode("utf-8"))
+    except red.ErrorRed as e:
+        raise ErrorLenguaje(str(e)) from None
     except urllib.error.HTTPError as e:
         raise ErrorLenguaje("El servicio respondio con el codigo %s" % e.code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:

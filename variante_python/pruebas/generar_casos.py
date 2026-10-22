@@ -188,9 +188,11 @@ def caso_bodegas(seed=11, por_bodega=False):
 
 def caso_hostil(seed=3):
     """Nombres y proveedores que intentan inyectar formulas en CSV o marcado en HTML."""
-    base = caso_sucio(seed=seed, n_skus=12)
+    base = caso_sucio(seed=seed, n_skus=18)
     ataques = ['=HYPERLINK("http://evil.test","clic")', "@SUM(A1:A9)", "+cmd|' /C calc'!A0", "-2+3", "\t=1+1", "Tornillo, =1+1", "Acme; @SUM(A1:A9)",
-               "<img src=x onerror=alert(1)>", "[clic](javascript:alert(1))", '"><script>alert(1)</script>', "<b onmouseover=alert(1)>x</b>", "Item\n=HYPERLINK(\"http://evil.test\")"]
+               "<img src=x onerror=alert(1)>", "[clic](javascript:alert(1))", '"><script>alert(1)</script>', "<b onmouseover=alert(1)>x</b>", "Item\n=HYPERLINK(\"http://evil.test\")",
+               # con espacios entre el operador y lo que sigue Excel tambien evalua ("- 1+1"), variantes de ancho completo y guiones que son solo texto
+               "- 1+1", "+ 1+1", "Pieza, - 2+3 mas", "\t- 2+3", "＝1+1", "-", "- "]
     for fila, ataque in zip(base["maestro"], ataques):
         fila["Descripción"] = ataque
         fila["Proveedor"] = ataques[(ataques.index(ataque) + 3) % len(ataques)]

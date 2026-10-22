@@ -228,7 +228,16 @@ code{background:#f0f0f0;padding:1px 4px}</style></head><body>${mdAHtml(md)}</bod
   // coma), un texto como "Tornillo, =1+1" se parte y la segunda mitad queda al inicio de una celda. Por eso se antepone una
   // comilla simple a CADA fragmento que, tras un separador posible (, ; tabulador o salto de linea), empiece con esos
   // caracteres. Los numeros no se tocan. Las celdas con coma, punto y coma, comillas o saltos de linea van entre comillas.
-  const neutralizar = (s) => s.replace(/(^|[,;\t\r\n]\s*)([=@]|[+\-](?=\S))/g, (m, antes, c) => `${antes}'${c}`);
+  // Cada fragmento se examina por separado. Excel lee como formula un texto que empiece (tras blancos) con = o @, o con + o -
+  // seguidos de algo, aunque haya espacios entre el operador y lo que sigue ("- 1+1"). Un guion solo es texto. Se incluyen las
+  // variantes de ancho completo. La comilla va delante del fragmento, antes de los blancos.
+  const esFormula = (f) => {
+    const t = f.replace(/^\s+/, '');
+    if (!t) return false;
+    if ('=@＝＠'.includes(t[0])) return true;
+    return '+-＋－'.includes(t[0]) && t.slice(1).trim() !== '';
+  };
+  const neutralizar = (s) => s.split(/([,;\t\r\n])/).map((f, i) => (i % 2 === 0 && esFormula(f) ? `'${f}` : f)).join('');
   const campo = (v) => {
     const esNumero = typeof v === 'number';
     let s = esNumero ? String(Math.round(v * 100) / 100).replace('.', ',') : String(v ?? '');

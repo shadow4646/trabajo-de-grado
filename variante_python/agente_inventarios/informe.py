@@ -118,11 +118,26 @@ def _md_a_html(txt):
 # "Tornillo, =1+1" se parte y la segunda mitad queda al inicio de una celda. Por eso se antepone una comilla simple a CADA
 # fragmento que, tras un separador posible (, ; tabulador o salto de linea), empiece con esos caracteres (OWASP, CSV Injection).
 # Los numeros no se tocan. Las celdas con coma, punto y coma, comillas o saltos de linea van entre comillas.
-_RE_FORMULA = re.compile(r"(^|[,;\t\r\n]\s*)([=@]|[+\-](?=\S))")
+_SEPARADORES = re.compile(r"([,;\t\r\n])")
+
+
+def _es_formula(fragmento):
+    """Excel lee como formula un texto que empiece (tras blancos) con = o @, o con + o - seguidos de algo, aunque haya
+    espacios entre el operador y lo que sigue ('- 1+1'). Un guion solo es texto. Se incluyen las variantes de ancho completo."""
+    t = fragmento.lstrip()
+    if not t:
+        return False
+    if t[0] in "=@＝＠":
+        return True
+    return t[0] in "+-＋－" and t[1:].strip() != ""
 
 
 def neutralizar(s):
-    return _RE_FORMULA.sub(lambda m: "%s'%s" % (m.group(1), m.group(2)), s)
+    partes = _SEPARADORES.split(s)  # fragmento, separador, fragmento, ...
+    for i in range(0, len(partes), 2):
+        if _es_formula(partes[i]):
+            partes[i] = "'" + partes[i]
+    return "".join(partes)
 
 
 def _campo(v):

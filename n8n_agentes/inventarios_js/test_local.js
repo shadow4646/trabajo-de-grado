@@ -85,6 +85,12 @@ maeHostil[4].producto = 'Tornillo, =1+1';
 maeHostil[5].proveedor = 'Acme; @SUM(A1:A9)';
 maeHostil[6].producto = 'Pieza ,-2+3 mas';
 maeHostil[7].producto = 'Item\n=HYPERLINK("http://evil.test")';
+// Con espacios entre el operador y lo que sigue Excel tambien lo evalua ("- 1+1" da 0), y existen variantes de ancho completo
+maeHostil[8].producto = '- 1+1';
+maeHostil[9].proveedor = '+ 1+1';
+maeHostil[10].producto = 'Pieza, - 2+3 mas';
+maeHostil[11].proveedor = '\t- 2+3';
+maeHostil[12].producto = '＝1+1';
 const datosHostiles = E.normalizar(csv(leer('datos_ejemplo/movimientos_ejemplo.csv')), maeHostil, { mapeo: {} });
 const resHostil = E.calcularInventario(datosHostiles, { mes }, {});
 const infHostil = E.armarInforme({ res: resHostil, ind: E.indicadores(resHostil, resHostil.P), cfg: { fuente: 'csv', moneda: '$' }, comentario: '', uso: null, tiempos: 0 });
@@ -92,7 +98,7 @@ const infHostil = E.armarInforme({ res: resHostil, ind: E.indicadores(resHostil,
 // Ninguna celda resultante puede empezar con = + - @ salvo que sea un numero puro.
 for (const [nombre, texto] of [['pedido', infHostil.csvPedido], ['detalle', infHostil.csvDetalle]]) {
   const celdas = texto.replace(/^﻿/, '').split(/[,;\t\r\n]/);
-  const peligrosas = celdas.filter((c) => /^\s*"?\s*[=@+\-]/.test(c) && !/^\s*"?-?\d+([.,]\d+)?"?\s*$/.test(c));
+  const peligrosas = celdas.filter((c) => /^\s*"?\s*[=@+\-＝＋－＠]/.test(c) && !/^\s*"?-?\d+([.,]\d+)?"?\s*$/.test(c) && c.trim() !== '-');
   if (peligrosas.length) { fallos++; console.log(`FALLA: el CSV de ${nombre} tiene celdas que Excel leeria como formula con algun separador:`, peligrosas.slice(0, 4)); }
 }
 if (!infHostil.csvDetalle.includes("'=HYPERLINK") || !infHostil.csvDetalle.includes("'@SUM")) { fallos++; console.log('FALLA: los textos hostiles no quedaron neutralizados con la comilla simple'); }

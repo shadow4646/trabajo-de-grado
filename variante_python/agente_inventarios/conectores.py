@@ -13,6 +13,8 @@ import sqlite3
 import urllib.parse
 import urllib.request
 
+from . import red
+
 
 class ErrorFuente(Exception):
     """La fuente de datos no se pudo leer; el mensaje explica que revisar."""
@@ -121,10 +123,12 @@ def leer_api(url, ruta_datos="", token=None, timeout=60):
     encabezados = {"Accept": "application/json"}
     if token:
         encabezados["Authorization"] = "Bearer %s" % token
-    req = urllib.request.Request(url, headers=encabezados, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        red.exigir_https_si_hay_clave(url, bool(token))
+        with red.abrir(urllib.request.Request(url, headers=encabezados, method="GET"), timeout) as r:
             carga = json.loads(r.read().decode("utf-8"))
+    except red.ErrorRed as e:
+        raise ErrorFuente(str(e)) from None
     except Exception as e:  # noqa: BLE001 - se explica el motivo sin exponer encabezados ni token
         raise ErrorFuente("No se pudo leer la API (%s)" % type(e).__name__) from None
     if isinstance(carga, dict) and ruta_datos:
