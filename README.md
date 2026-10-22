@@ -17,6 +17,20 @@ Proyecto de grado de Ingeniería Industrial. Este repositorio contiene solo el c
 | `.claude/agents/` | Subagentes de Claude Code: `experto-inventarios`, `experto-compras`, `experto-n8n`. |
 | `.claude/skills/revision-experta-proyecto/` | Skill que convoca a los tres expertos como una junta de revisión. |
 
+## Variantes de despliegue y estado
+
+El motor de cálculo y verificación de los dos agentes es independiente de la plataforma. El diseño contempla dos variantes de ejecución y un proveedor de lenguaje intercambiable:
+
+| Capa | Opción | Estado |
+|---|---|---|
+| Orquestación | Variante B: n8n (lo que contiene este repositorio) | Construida y probada |
+| Orquestación | Variante A: paquete de Python autónomo, sin n8n | Diseñada, por construir |
+| Proveedor de lenguaje | Claude Haiku 4.5 por API | Probado en corridas reales |
+| Proveedor de lenguaje | Modelo local con Ollama | Diseñado, no probado |
+| Proveedor de lenguaje | Ninguno (agente de inventarios con `usar_ia: false`) | El motor se prueba sin IA |
+
+Hoy el nombre del modelo y la dirección del servicio son constantes en `00_lib.js` de cada agente; parametrizarlos para cambiar de proveedor es parte del trabajo pendiente.
+
 ## Cómo usar los workflows de n8n
 
 1. Genera los JSON: `python n8n_agentes/build_agente_inventarios.py` y `python n8n_agentes/build_agente_proveedores.py`.
