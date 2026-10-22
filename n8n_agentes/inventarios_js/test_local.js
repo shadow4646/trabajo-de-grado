@@ -97,6 +97,21 @@ for (const [nombre, texto] of [['pedido', infHostil.csvPedido], ['detalle', infH
 }
 if (!infHostil.csvDetalle.includes("'=HYPERLINK") || !infHostil.csvDetalle.includes("'@SUM")) { fallos++; console.log('FALLA: los textos hostiles no quedaron neutralizados con la comilla simple'); }
 
+// ---- HTML del informe: nombres hostiles de productos no deben producir etiquetas, eventos ni enlaces ejecutables ----
+const maeHtml = csv(leer('datos_ejemplo/maestro_ejemplo.csv'));
+const poner = (sku, campo, valor) => { const f = maeHtml.find((r) => r.sku === sku); if (f) f[campo] = valor; };
+poner('MOT-1HP', 'producto', '<img src=x onerror=alert(1)>');
+poner('LAM-AC-2MM', 'producto', '[clic](javascript:alert(1))');
+poner('ROD-6204', 'producto', '"><script>alert(1)</script>');
+poner('LIJ-80', 'producto', '[a](https://ok.test" onclick="alert(1))');
+poner('ACE-HID-20L', 'proveedor', '<b onmouseover=alert(1)>x</b>');
+const datosHtml = E.normalizar(csv(leer('datos_ejemplo/movimientos_ejemplo.csv')), maeHtml, { mapeo: {} });
+const resHtml = E.calcularInventario(datosHtml, { mes }, {});
+const infHtml = E.armarInforme({ res: resHtml, ind: E.indicadores(resHtml, resHtml.P), cfg: { fuente: 'csv', moneda: '$' }, comentario: '', uso: null, tiempos: 0 });
+const htmlPeligros = [/<script/i, /<img/i, /<[a-z][^>]*\son\w+\s*=/i, /href="\s*javascript:/i].filter((r) => r.test(infHtml.html));
+if (htmlPeligros.length) { fallos++; console.log('FALLA: el HTML del informe contiene marcado peligroso a partir de nombres hostiles:', htmlPeligros.map(String)); }
+if (!/&lt;img|&lt;script/.test(infHtml.html)) { fallos++; console.log('FALLA: la prueba de HTML no es valida, los nombres hostiles no aparecen escapados en el informe'); }
+
 console.log(`informe: ${inf.md.length} caracteres, resumen ${JSON.stringify(inf.resumen)}`);
 console.log(`\ntest_local: fallos ${fallos}`);
 process.exit(fallos ? 1 : 0);

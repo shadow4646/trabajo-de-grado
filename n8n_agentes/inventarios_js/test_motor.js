@@ -121,5 +121,19 @@ ok('saldo negativo del kardex se reporta', rNeg.calidad.saldo_negativo.length ==
 ok('descuadre entre el saldo del kardex y el maestro se reporta', rNeg.calidad.descuadres.length === 1 && rNeg.calidad.descuadres[0].diferencia === 4, JSON.stringify(rNeg.calidad.descuadres));
 ok('el stock negativo se trata como cero en la decision', rNeg.resultados[0].stock === 0);
 
+// ---- volumen: Math.max(...lista) revienta con unos 125 mil argumentos; un kardex de empresa grande los supera ----
+const grande = [];
+for (let i = 0; i < 200000; i++) grande.push(fila(`2026-0${1 + (i % 9)}-${String(1 + (i % 28)).padStart(2, '0')}`, 'A', 'VENTA', 1));
+let errGrande = null;
+let msGrande = 0;
+try {
+  const t0 = Date.now();
+  const dg = M.normalizar(grande, [{ Codigo: 'A', Existencia: 10, Costo: 1, 'Plazo de entrega': 7 }], { mapeo: {} });
+  M.calcularInventario(dg, { mes: '2026-09' }, {});
+  msGrande = Date.now() - t0;
+} catch (e) { errGrande = e.message; }
+ok('un kardex de 200 mil movimientos no rompe el motor', errGrande === null, errGrande);
+console.log(`kardex de 200000 movimientos: ${errGrande === null ? msGrande + ' ms' : 'ERROR'}`);
+
 console.log(`test_motor: fallos ${fallos}`);
 process.exit(fallos ? 1 : 0);

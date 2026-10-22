@@ -157,7 +157,7 @@ function pronosticar(valores, P) {
   const adi = nz.length ? n / nz.length : Infinity;
   const cv2 = nz.length >= 2 && media(nz) > 0 ? (desvMuestral(nz) / media(nz)) ** 2 : 0;
   const patron = !nz.length ? 'sin demanda' : adi < 1.32 ? (cv2 < 0.49 ? 'suave' : 'erratica') : (cv2 < 0.49 ? 'intermitente' : 'irregular');
-  const out = { ...base, n, adi: Number.isFinite(adi) ? adi : null, cv2, patron, sigma: desvMuestral(valores), maximo: Math.max(...valores) };
+  const out = { ...base, n, adi: Number.isFinite(adi) ? adi : null, cv2, patron, sigma: desvMuestral(valores), maximo: valores.reduce((mx, x) => (x > mx ? x : mx), -Infinity) };
   if (n < 3) return { ...out, metodo: 'promedio simple (historial insuficiente)', demanda: media(valores), confianza: 'BAJA' };
   if ((patron === 'intermitente' || patron === 'irregular') && nz.length >= 2) return { ...out, metodo: 'Croston con correccion SBA (demanda intermitente)', demanda: crostonSBA(valores, P.alfa_croston), confianza: 'MEDIA' };
   if (n >= 6) return { ...out, metodo: 'suavizado exponencial simple', demanda: suavizadoExponencial(valores, P.alfa_ses), confianza: patron === 'suave' ? 'ALTA' : 'MEDIA' };
@@ -205,7 +205,8 @@ function calcularInventario(datos, cfg, parametros) {
   const porKey = new Map();
   for (const m of datos.movs) { if (!porKey.has(m.key)) porKey.set(m.key, []); porKey.get(m.key).push(m); }
   for (const lista of porKey.values()) lista.sort((a, b) => a.dia - b.dia || a.idx - b.idx);
-  const diaFin = datos.movs.length ? Math.max(...datos.movs.map((m) => m.dia)) : 0;
+  // Sin Math.max(...lista): con unos 125 mil movimientos el spread supera el limite de argumentos y lanza RangeError
+  const diaFin = datos.movs.reduce((mx, m) => (m.dia > mx ? m.dia : mx), 0);
   const finMes = ultimoDiaMes(ym);
   const corte = Math.min(finMes, diaFin);
   if (diaFin < finMes) avisos.push(`Los movimientos llegan hasta ${isoDe(diaFin)}, antes del fin de ${ym}: el mes esta incompleto y el informe se calcula al ${isoDe(corte)}.`);
