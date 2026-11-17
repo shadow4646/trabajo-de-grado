@@ -2,6 +2,31 @@
 
 Proyecto de grado de Ingeniería Industrial. Este repositorio contiene solo el código y los agentes: workflows de n8n, los scripts que los generan, los subagentes de Claude Code y la investigación que los sustenta.
 
+## Estado del proyecto (noviembre de 2026)
+
+| Fase | Estado |
+|---|---|
+| 1 a 3. Diagnóstico, planteamiento del problema y diseño de la arquitectura | Completadas |
+| 4. Desarrollo del prototipo | En curso: los dos agentes funcionan en n8n (Variante B) y el agente de inventarios está portado a Python (Variante A) |
+| 5. Integración y pruebas internas | Siguiente: portar el agente de proveedores a Python y probar un modelo local con Ollama |
+| 6 a 8. Validación con un caso de estudio, análisis e informe final | Programadas hasta el 16 de diciembre de 2026 |
+
+Todas las pruebas se han hecho con datos sintéticos y con búsquedas reales en la web pública; todavía no hay validación con datos de una empresa.
+
+## Cómo correr las pruebas
+
+No necesitan claves de API ni n8n. Con Node.js y Python 3 instalados:
+
+```
+node n8n_agentes/inventarios_js/test_motor.js     # fórmulas del motor de inventarios y 200 000 movimientos
+node n8n_agentes/inventarios_js/test_local.js     # agente de inventarios de punta a punta con los datos de ejemplo
+node n8n_agentes/busqueda_js/test_logica.js       # relevancia del producto y detección de moneda
+node n8n_agentes/busqueda_js/test_seguridad.js    # filtro SSRF (casos fijos y 207 360 variantes) y HTML hostil
+cd variante_python && python -m unittest discover -s pruebas -p "test_*.py" -t .   # 58 pruebas de la Variante A
+```
+
+Resultado de la última corrida (16 de noviembre de 2026): 0 fallos en las cuatro pruebas de JavaScript, ninguna variante peligrosa aceptada por el filtro SSRF y 58 de 58 pruebas de Python correctas, incluida la equivalencia exacta con el motor de JavaScript en 7 casos.
+
 ## Estructura
 
 | Ruta | Contenido |
